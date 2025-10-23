@@ -8,7 +8,34 @@
 enum class ObstacleType {
     JUMP_OVER,    // Можно перепрыгнуть
     DUCK_UNDER,   // Можно пригнуться
-    WALL          // Нельзя пройти
+    WALL,         // Нельзя пройти
+    LOW_BARRIER   // Низкий барьер - нельзя перепрыгнуть, можно пригнуться
+};
+
+// Типы усилений
+enum class PowerUpType {
+    SPEED_BOOST,      // Увеличение скорости
+    INVINCIBILITY,    // Неуязвимость
+    MAGNET,           // Магнит для монет
+    DOUBLE_POINTS     // Двойные очки
+};
+
+// Структура для улучшений
+struct Upgrade {
+    std::string name;
+    std::string description;
+    int level;
+    int maxLevel;
+    int cost;
+    float value;
+    float increment;
+};
+
+// Структура для активных эффектов усилений
+struct ActivePowerUp {
+    PowerUpType type;
+    float timer;
+    float duration;
 };
 
 // Структура для игрока
@@ -23,6 +50,10 @@ struct Player {
     float jumpVelocity;
     float gravity;
     int characterType;
+
+    // Эффекты усилений (теперь могут комбинироваться)
+    float originalSpeed;
+    std::vector<ActivePowerUp> activePowerUps;
 };
 
 // Структура для препятствий
@@ -44,6 +75,15 @@ struct Coin {
     float speed;
 };
 
+// Структура для усилений
+struct PowerUp {
+    Vector3 position;
+    bool active;
+    float speed;
+    PowerUpType type;
+    float rotation; // Для анимации вращения
+};
+
 // Структура для меню
 struct Menu {
     bool isActive;
@@ -61,6 +101,29 @@ struct Menu {
     }
 };
 
+// Структура для магазина
+struct Shop {
+    bool isActive;
+    int selectedUpgrade;
+    std::vector<Upgrade> upgrades;
+    int totalCoins;
+
+    Shop() {
+        isActive = false;
+        selectedUpgrade = 0;
+        totalCoins = 0;
+
+        // Инициализация улучшений (теперь +2.5 секунды за уровень)
+        upgrades = {
+            {"Speed Boost", "Increase speed boost duration", 1, 5, 100, 2.5f, 2.5f},
+            {"Invincibility", "Increase invincibility duration", 1, 5, 150, 2.5f, 2.5f},
+            {"Coin Magnet", "Increase magnet range and duration", 1, 5, 120, 2.5f, 2.5f},
+            {"Double Points", "Increase double points duration", 1, 5, 200, 2.5f, 2.5f},
+            {"Coin Value", "Increase coins value", 1, 5, 250, 100.0f, 25.0f}
+        };
+    }
+};
+
 class Game {
 private:
     const int screenWidth = 1100;
@@ -69,11 +132,14 @@ private:
     Player player;
     std::vector<Obstacle> obstacles;
     std::vector<Coin> coins;
+    std::vector<PowerUp> powerUps;
 
     float obstacleSpawnTimer;
     float coinSpawnTimer;
-    const float obstacleSpawnInterval = 1.5f; // Вернули обычный интервал
+    float powerUpSpawnTimer;
+    const float obstacleSpawnInterval = 1.5f;
     const float coinSpawnInterval = 2.0f;
+    const float powerUpSpawnInterval = 8.0f;
 
     int score;
     int coinsCollected;
@@ -86,23 +152,49 @@ private:
     float gameSpeed;
 
     Menu menu;
+    Shop shop;
     Color backgroundColor;
     Color groundColor;
 
-    // Текстуры для препятствий
-    Texture2D jumpObstacleTexture;
-    Texture2D duckObstacleTexture;
-    Texture2D wallObstacleTexture;
+    // Текстуры для препятствий по локациям
+    Texture2D cityJumpTexture;
+    Texture2D cityDuckTexture;
+    Texture2D cityWallTexture;
+    Texture2D cityLowBarrierTexture;
+
+    Texture2D forestJumpTexture;
+    Texture2D forestDuckTexture;
+    Texture2D forestWallTexture;
+    Texture2D forestLowBarrierTexture;
+
+    Texture2D desertJumpTexture;
+    Texture2D desertDuckTexture;
+    Texture2D desertWallTexture;
+    Texture2D desertLowBarrierTexture;
+
+    Texture2D winterJumpTexture;
+    Texture2D winterDuckTexture;
+    Texture2D winterWallTexture;
+    Texture2D winterLowBarrierTexture;
+
+    // Текстуры для усилений
+    Texture2D speedBoostTexture;
+    Texture2D invincibilityTexture;
+    Texture2D magnetTexture;
+    Texture2D doublePointsTexture;
 
     bool texturesLoaded;
     float environmentOffset;
 
-    // Модели кубов для текстур
-    Model cubeModel;
+    // Текстуры персонажей (основные)
+    Texture2D characterTexture1; // Default
+    Texture2D characterTexture2; // Ninja
+    Texture2D characterTexture3; // Robot
+    Texture2D characterTexture4; // Girl
 
 public:
     Game() {
-        InitWindow(screenWidth, screenHeight, "Runner 3D");
+        InitWindow(screenWidth, screenHeight, "Runner 3D with Character Textures");
 
         // Настройка дорожек
         laneWidth = 4.0f;
@@ -122,6 +214,10 @@ public:
         player.gravity = 15.0f;
         player.characterType = 0;
 
+        // Инициализация эффектов усилений
+        player.originalSpeed = player.speed;
+        player.activePowerUps.clear();
+
         // Инициализация 3D камеры
         camera.position = { 0.0f, 5.0f, 10.0f };
         camera.target = { player.position.x, player.position.y, player.position.z };
@@ -132,6 +228,7 @@ public:
         // Таймеры
         obstacleSpawnTimer = 0;
         coinSpawnTimer = 0;
+        powerUpSpawnTimer = 0;
 
         // Счет
         score = 0;
@@ -146,8 +243,11 @@ public:
         texturesLoaded = false;
         environmentOffset = 0.0f;
 
-        // Создаем модель куба
-        cubeModel = LoadModelFromMesh(GenMeshCube(1.0f, 1.0f, 1.0f));
+        // Инициализация текстур персонажей как пустых
+        characterTexture1 = { 0 };
+        characterTexture2 = { 0 };
+        characterTexture3 = { 0 };
+        characterTexture4 = { 0 };
 
         // Загружаем текстуры
         LoadTextures();
@@ -156,13 +256,21 @@ public:
     }
 
     ~Game() {
-        // Выгружаем текстуры и модель
-        if (texturesLoaded) {
-            UnloadTexture(jumpObstacleTexture);
-            UnloadTexture(duckObstacleTexture);
-            UnloadTexture(wallObstacleTexture);
-        }
-        UnloadModel(cubeModel);
+        // Выгружаем текстуры препятствий
+        UnloadLocationTextures();
+
+        // Выгружаем текстуры усилений
+        UnloadTexture(speedBoostTexture);
+        UnloadTexture(invincibilityTexture);
+        UnloadTexture(magnetTexture);
+        UnloadTexture(doublePointsTexture);
+
+        // Выгружаем текстуры персонажей
+        if (characterTexture1.id != 0) UnloadTexture(characterTexture1);
+        if (characterTexture2.id != 0) UnloadTexture(characterTexture2);
+        if (characterTexture3.id != 0) UnloadTexture(characterTexture3);
+        if (characterTexture4.id != 0) UnloadTexture(characterTexture4);
+
         CloseWindow();
     }
 
@@ -174,73 +282,160 @@ public:
     }
 
 private:
-    void LoadTextures() {
-        // Создаем текстуры программно
-        jumpObstacleTexture = CreateJumpObstacleTexture();
-        duckObstacleTexture = CreateDuckObstacleTexture();
-        wallObstacleTexture = CreateWallObstacleTexture();
-        texturesLoaded = true;
+    void UnloadLocationTextures() {
+        // Выгружаем текстуры для City
+        if (cityJumpTexture.id != 0) UnloadTexture(cityJumpTexture);
+        if (cityDuckTexture.id != 0) UnloadTexture(cityDuckTexture);
+        if (cityWallTexture.id != 0) UnloadTexture(cityWallTexture);
+        if (cityLowBarrierTexture.id != 0) UnloadTexture(cityLowBarrierTexture);
+
+        // Выгружаем текстуры для Forest
+        if (forestJumpTexture.id != 0) UnloadTexture(forestJumpTexture);
+        if (forestDuckTexture.id != 0) UnloadTexture(forestDuckTexture);
+        if (forestWallTexture.id != 0) UnloadTexture(forestWallTexture);
+        if (forestLowBarrierTexture.id != 0) UnloadTexture(forestLowBarrierTexture);
+
+        // Выгружаем текстуры для Desert
+        if (desertJumpTexture.id != 0) UnloadTexture(desertJumpTexture);
+        if (desertDuckTexture.id != 0) UnloadTexture(desertDuckTexture);
+        if (desertWallTexture.id != 0) UnloadTexture(desertWallTexture);
+        if (desertLowBarrierTexture.id != 0) UnloadTexture(desertLowBarrierTexture);
+
+        // Выгружаем текстуры для Winter
+        if (winterJumpTexture.id != 0) UnloadTexture(winterJumpTexture);
+        if (winterDuckTexture.id != 0) UnloadTexture(winterDuckTexture);
+        if (winterWallTexture.id != 0) UnloadTexture(winterWallTexture);
+        if (winterLowBarrierTexture.id != 0) UnloadTexture(winterLowBarrierTexture);
     }
 
-    Texture2D CreateJumpObstacleTexture() {
-        // Текстура для прыжка - высокая с стрелкой вверх
-        Image image = GenImageColor(64, 128, BLANK);
+    void LoadTextures() {
+        // Загружаем текстуры для каждой локации
+        LoadLocationTextures();
 
-        // Основной цвет - темно-серый
-        for (int y = 0; y < 128; y++) {
-            for (int x = 0; x < 64; x++) {
-                Color color = DARKGRAY;
+        // Создаем текстуры для усилений
+        speedBoostTexture = CreateSpeedBoostTexture();
+        invincibilityTexture = CreateInvincibilityTexture();
+        magnetTexture = CreateMagnetTexture();
+        doublePointsTexture = CreateDoublePointsTexture();
 
-                // Стрелка вверх в центре
-                if (y < 40 && abs(x - 32) <= 10 - y / 4) {
-                    color = YELLOW;
-                }
+        // Загружаем текстуры персонажей как основные
+        LoadCharacterTexture("default.png", characterTexture1);   // Default
+        LoadCharacterTexture("ninja.png", characterTexture2);     // Ninja
+        LoadCharacterTexture("robot.png", characterTexture3);     // Robot
+        LoadCharacterTexture("girl.png", characterTexture4);      // Girl
 
-                // Контуры
-                if (x == 0 || x == 63 || y == 0 || y == 127) {
-                    color = BLACK;
-                }
+        texturesLoaded = AreTexturesLoaded();
 
-                ImageDrawPixel(&image, x, y, color);
+        TraceLog(LOG_INFO, "All textures loaded: %s", texturesLoaded ? "YES" : "NO");
+    }
+
+    void LoadLocationTextures() {
+        // Загружаем текстуры для City
+        LoadObstacleTexture("city_jump.png", cityJumpTexture);
+        LoadObstacleTexture("city_duck.png", cityDuckTexture);
+        LoadObstacleTexture("city_wall.png", cityWallTexture);
+        LoadObstacleTexture("city_barrier.png", cityLowBarrierTexture);
+
+        // Загружаем текстуры для Forest
+        LoadObstacleTexture("forest_jump.png", forestJumpTexture);
+        LoadObstacleTexture("forest_duck.png", forestDuckTexture);
+        LoadObstacleTexture("forest_wall.png", forestWallTexture);
+        LoadObstacleTexture("forest_barrier.png", forestLowBarrierTexture);
+
+        // Загружаем текстуры для Desert
+        LoadObstacleTexture("desert_jump.png", desertJumpTexture);
+        LoadObstacleTexture("desert_duck.png", desertDuckTexture);
+        LoadObstacleTexture("desert_wall.png", desertWallTexture);
+        LoadObstacleTexture("desert_barrier.png", desertLowBarrierTexture);
+
+        // Загружаем текстуры для Winter
+        LoadObstacleTexture("winter_jump.png", winterJumpTexture);
+        LoadObstacleTexture("winter_duck.png", winterDuckTexture);
+        LoadObstacleTexture("winter_wall.png", winterWallTexture);
+        LoadObstacleTexture("winter_barrier.png", winterLowBarrierTexture);
+    }
+
+    void LoadObstacleTexture(const char* filepath, Texture2D& texture) {
+        if (FileExists(filepath)) {
+            Image image = LoadImage(filepath);
+            if (image.data != NULL) {
+                ImageFlipVertical(&image); // Важно: переворачиваем текстуру
+                texture = LoadTextureFromImage(image);
+                UnloadImage(image);
+                TraceLog(LOG_INFO, "Successfully loaded obstacle texture: %s", filepath);
+            }
+            else {
+                TraceLog(LOG_ERROR, "Failed to load image: %s", filepath);
+                texture = CreateDefaultObstacleTexture();
             }
         }
+        else {
+            TraceLog(LOG_WARNING, "Obstacle texture not found: %s, using default", filepath);
+            texture = CreateDefaultObstacleTexture();
+        }
+    }
 
+    Texture2D CreateDefaultObstacleTexture() {
+        // Создаем простую текстуру-заглушку
+        Image image = GenImageColor(64, 64, GRAY);
+        for (int y = 0; y < 64; y++) {
+            for (int x = 0; x < 64; x++) {
+                if (x == 0 || x == 63 || y == 0 || y == 63) {
+                    ImageDrawPixel(&image, x, y, BLACK);
+                }
+            }
+        }
         Texture2D texture = LoadTextureFromImage(image);
         UnloadImage(image);
         return texture;
     }
 
-    Texture2D CreateDuckObstacleTexture() {
-        // Текстура для приседания - низкая с большой стрелкой вниз
-        Image image = GenImageColor(64, 64, BLANK);
+    void LoadCharacterTexture(const char* filepath, Texture2D& texture) {
+        if (FileExists(filepath)) {
+            Image image = LoadImage(filepath);
+            if (image.data != NULL) {
+                ImageFlipVertical(&image); // Важно: переворачиваем текстуру
+                texture = LoadTextureFromImage(image);
+                UnloadImage(image);
+                TraceLog(LOG_INFO, "Successfully loaded character texture: %s", filepath);
+            }
+            else {
+                TraceLog(LOG_ERROR, "Failed to load image: %s", filepath);
+                texture = CreateDefaultCharacterTexture();
+            }
+        }
+        else {
+            TraceLog(LOG_WARNING, "Character texture not found: %s", filepath);
+            texture = CreateDefaultCharacterTexture();
+        }
+    }
 
-        // Основной цвет - коричневый
+    Texture2D CreateDefaultCharacterTexture() {
+        // Создаем простую текстуру-заглушку с цветом в зависимости от персонажа
+        Image image = GenImageColor(64, 64, BLANK);
+        Color baseColor = RED; // По умолчанию красный
+
         for (int y = 0; y < 64; y++) {
             for (int x = 0; x < 64; x++) {
-                Color color = BROWN;
+                Color color = baseColor;
 
-                // Большая стрелка вниз по центру
-                int arrowTop = 15;
-                int arrowBottom = 45;
-                int centerX = 32;
-
-                // Рисуем стрелку вниз
-                if (y >= arrowTop && y <= arrowBottom) {
-                    int width = 8 + (y - arrowTop) / 2; // Стрелка расширяется к низу
-                    if (abs(x - centerX) <= width) {
-                        color = YELLOW;
-                    }
+                // Простой рисунок "лица"
+                if ((x > 20 && x < 44 && y > 20 && y < 44)) {
+                    color = ColorBrightness(baseColor, 0.7f);
                 }
 
-                // Наконечник стрелки
-                if (y > arrowBottom && y <= 55) {
-                    int tipWidth = 12 - (y - arrowBottom);
-                    if (tipWidth > 0 && abs(x - centerX) <= tipWidth) {
-                        color = YELLOW;
-                    }
+                // Глаза
+                if ((x >= 25 && x <= 30 && y >= 25 && y <= 30) ||
+                    (x >= 34 && x <= 39 && y >= 25 && y <= 30)) {
+                    color = BLACK;
                 }
 
-                // Контуры
+                // Рот
+                if (x >= 25 && x <= 39 && y >= 35 && y <= 38) {
+                    color = BLACK;
+                }
+
+                // Рамка
                 if (x == 0 || x == 63 || y == 0 || y == 63) {
                     color = BLACK;
                 }
@@ -248,45 +443,205 @@ private:
                 ImageDrawPixel(&image, x, y, color);
             }
         }
-
         Texture2D texture = LoadTextureFromImage(image);
         UnloadImage(image);
         return texture;
     }
 
-    Texture2D CreateWallObstacleTexture() {
-        // Текстура для стены - высокая с крестом
-        Image image = GenImageColor(64, 128, BLANK);
+    bool AreTexturesLoaded() const {
+        // Проверяем, что все основные текстуры загружены
+        return cityJumpTexture.id != 0 && cityDuckTexture.id != 0 &&
+            forestJumpTexture.id != 0 && forestDuckTexture.id != 0 &&
+            speedBoostTexture.id != 0 && invincibilityTexture.id != 0;
+    }
 
-        // Основной цвет - темно-красный
-        for (int y = 0; y < 128; y++) {
+    Texture2D GetObstacleTexture(ObstacleType type) {
+        // Возвращаем текстуру препятствия в зависимости от текущей локации и типа
+        switch (menu.selectedLocation) {
+        case 0: // City
+            switch (type) {
+            case ObstacleType::JUMP_OVER: return cityJumpTexture;
+            case ObstacleType::DUCK_UNDER: return cityDuckTexture;
+            case ObstacleType::WALL: return cityWallTexture;
+            case ObstacleType::LOW_BARRIER: return cityLowBarrierTexture;
+            default: return cityJumpTexture;
+            }
+        case 1: // Forest
+            switch (type) {
+            case ObstacleType::JUMP_OVER: return forestJumpTexture;
+            case ObstacleType::DUCK_UNDER: return forestDuckTexture;
+            case ObstacleType::WALL: return forestWallTexture;
+            case ObstacleType::LOW_BARRIER: return forestLowBarrierTexture;
+            default: return forestJumpTexture;
+            }
+        case 2: // Desert
+            switch (type) {
+            case ObstacleType::JUMP_OVER: return desertJumpTexture;
+            case ObstacleType::DUCK_UNDER: return desertDuckTexture;
+            case ObstacleType::WALL: return desertWallTexture;
+            case ObstacleType::LOW_BARRIER: return desertLowBarrierTexture;
+            default: return desertJumpTexture;
+            }
+        case 3: // Winter
+            switch (type) {
+            case ObstacleType::JUMP_OVER: return winterJumpTexture;
+            case ObstacleType::DUCK_UNDER: return winterDuckTexture;
+            case ObstacleType::WALL: return winterWallTexture;
+            case ObstacleType::LOW_BARRIER: return winterLowBarrierTexture;
+            default: return winterJumpTexture;
+            }
+        default: return cityJumpTexture;
+        }
+    }
+
+    Texture2D GetCharacterTexture(int characterType) {
+        // Возвращаем текстуру для выбранного персонажа
+        switch (characterType) {
+        case 0: return characterTexture1; // Default
+        case 1: return characterTexture2; // Ninja
+        case 2: return characterTexture3; // Robot
+        case 3: return characterTexture4; // Girl
+        default: return characterTexture1;
+        }
+    }
+
+    // Функции создания текстур для усилений
+    Texture2D CreateSpeedBoostTexture() {
+        Image image = GenImageColor(64, 64, BLANK);
+        for (int y = 0; y < 64; y++) {
             for (int x = 0; x < 64; x++) {
-                Color color = MAROON;
-
-                // Красный крест
-                if (abs(x - 32) <= 5 || abs(y - 64) <= 5) {
-                    if (abs(x - 32) <= 5 && abs(y - 64) <= 5) {
-                        color = RED;
-                    }
+                Color color = ORANGE;
+                // Молния
+                if ((x >= 20 && x <= 44 && y == 32) ||
+                    (x >= 25 && x <= 39 && abs(y - 20) <= 5) ||
+                    (x >= 30 && x <= 34 && abs(y - 44) <= 5)) {
+                    color = YELLOW;
                 }
-
                 // Контуры
-                if (x == 0 || x == 63 || y == 0 || y == 127) {
+                if (x == 0 || x == 63 || y == 0 || y == 63) {
                     color = BLACK;
                 }
-
                 ImageDrawPixel(&image, x, y, color);
             }
         }
-
         Texture2D texture = LoadTextureFromImage(image);
         UnloadImage(image);
         return texture;
+    }
+
+    Texture2D CreateInvincibilityTexture() {
+        Image image = GenImageColor(64, 64, BLANK);
+        for (int y = 0; y < 64; y++) {
+            for (int x = 0; x < 64; x++) {
+                Color color = GOLD;
+                // Звезда
+                float centerX = 32.0f;
+                float centerY = 32.0f;
+                float dx = x - centerX;
+                float dy = y - centerY;
+                float distance = sqrt(dx * dx + dy * dy);
+                float angle = atan2(dy, dx);
+
+                // Форма звезды
+                float starRadius = 25.0f * (0.5f + 0.5f * cos(5 * angle));
+                if (distance < starRadius) {
+                    color = YELLOW;
+                }
+                // Контуры
+                if (x == 0 || x == 63 || y == 0 || y == 63) {
+                    color = BLACK;
+                }
+                ImageDrawPixel(&image, x, y, color);
+            }
+        }
+        Texture2D texture = LoadTextureFromImage(image);
+        UnloadImage(image);
+        return texture;
+    }
+
+    Texture2D CreateMagnetTexture() {
+        Image image = GenImageColor(64, 64, BLANK);
+        for (int y = 0; y < 64; y++) {
+            for (int x = 0; x < 64; x++) {
+                Color color = RED;
+                // Форма магнита
+                if ((x >= 15 && x <= 49 && y >= 20 && y <= 44) &&
+                    !(x >= 25 && x <= 39 && y >= 25 && y <= 39)) {
+                    color = BLUE;
+                }
+                // Контуры
+                if (x == 0 || x == 63 || y == 0 || y == 63) {
+                    color = BLACK;
+                }
+                ImageDrawPixel(&image, x, y, color);
+            }
+        }
+        Texture2D texture = LoadTextureFromImage(image);
+        UnloadImage(image);
+        return texture;
+    }
+
+    Texture2D CreateDoublePointsTexture() {
+        Image image = GenImageColor(64, 64, BLANK);
+        for (int y = 0; y < 64; y++) {
+            for (int x = 0; x < 64; x++) {
+                Color color = GREEN;
+                // Цифра 2
+                if ((x >= 20 && x <= 44 && y == 20) || // Верхняя горизонтальная
+                    (x >= 20 && x <= 44 && y == 32) || // Средняя горизонтальная
+                    (x >= 20 && x <= 44 && y == 44) || // Нижняя горизонтальная
+                    (x >= 40 && x <= 44 && y >= 20 && y <= 32) || // Правая верхняя вертикальная
+                    (x >= 20 && x <= 24 && y >= 32 && y <= 44)) { // Левая нижняя вертикальная
+                    color = LIME;
+                }
+                // Контуры
+                if (x == 0 || x == 63 || y == 0 || y == 63) {
+                    color = BLACK;
+                }
+                ImageDrawPixel(&image, x, y, color);
+            }
+        }
+        Texture2D texture = LoadTextureFromImage(image);
+        UnloadImage(image);
+        return texture;
+    }
+
+    void DrawTexturedCube(Vector3 position, Vector3 size, Texture2D texture) {
+        // Создаем временную модель для каждого препятствия с текстурой
+        Mesh cubeMesh = GenMeshCube(1.0f, 1.0f, 1.0f);
+        Model tempModel = LoadModelFromMesh(cubeMesh);
+
+        // Устанавливаем текстуру для материала
+        tempModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = texture;
+
+        // Рисуем модель
+        DrawModelEx(tempModel, position, { 0, 1, 0 }, 0.0f, size, WHITE);
+
+        // Очищаем временную модель и меш
+        UnloadModel(tempModel);
+    }
+
+    void DrawObstacle(const Obstacle& obstacle) {
+        if (obstacle.active) {
+            if (texturesLoaded && obstacle.texture.id != 0) {
+                DrawTexturedCube(obstacle.position, obstacle.size, obstacle.texture);
+            }
+            else {
+                // Fallback - рисуем цветной куб если текстура не загружена
+                DrawCube(obstacle.position, obstacle.size.x, obstacle.size.y, obstacle.size.z, obstacle.color);
+            }
+            DrawCubeWires(obstacle.position, obstacle.size.x, obstacle.size.y, obstacle.size.z, BLACK);
+        }
     }
 
     void Update() {
         if (menu.isActive) {
             UpdateMenu();
+            return;
+        }
+
+        if (shop.isActive) {
+            UpdateShop();
             return;
         }
 
@@ -297,6 +652,11 @@ private:
             if (IsKeyPressed(KEY_M)) {
                 menu.isActive = true;
             }
+            if (IsKeyPressed(KEY_S)) {
+                // Переход в магазин после игры
+                shop.totalCoins += coinsCollected;
+                shop.isActive = true;
+            }
             return;
         }
 
@@ -304,21 +664,29 @@ private:
         UpdatePlayer();
         UpdateObstacles();
         UpdateCoins();
+        UpdatePowerUps();
         UpdateCamera();
         CheckCollisions();
+        UpdatePowerUpEffects();
 
         // Обновляем параллакс-эффект
         environmentOffset += gameSpeed * 0.3f * GetFrameTime();
         if (environmentOffset > 50.0f) environmentOffset = 0.0f;
 
         // Увеличиваем счет
-        score += 1;
+        score += HasPowerUp(PowerUpType::DOUBLE_POINTS) ? 2 : 1;
     }
 
     void UpdateMenu() {
         int oldLocation = menu.selectedLocation;
 
-        // Выбор локации - UP/DOWN
+        // Обработка входа в магазин из меню
+        if (IsKeyPressed(KEY_S)) {
+            shop.isActive = true;
+            menu.isActive = false;
+            return;
+        }
+
         if (IsKeyPressed(KEY_UP)) {
             if (menu.selectedLocation > 0) menu.selectedLocation--;
         }
@@ -326,7 +694,6 @@ private:
             if (menu.selectedLocation < (int)menu.locations.size() - 1) menu.selectedLocation++;
         }
 
-        // Выбор персонажа - A/D
         if (IsKeyPressed(KEY_A)) {
             if (menu.selectedCharacter > 0) menu.selectedCharacter--;
         }
@@ -340,9 +707,42 @@ private:
             menu.isActive = false;
         }
 
-        // Если локация изменилась, применяем настройки
         if (oldLocation != menu.selectedLocation) {
             ApplyLocationSettings();
+        }
+    }
+
+    void UpdateShop() {
+        // Навигация по магазину
+        if (IsKeyPressed(KEY_UP)) {
+            if (shop.selectedUpgrade > 0) shop.selectedUpgrade--;
+        }
+        if (IsKeyPressed(KEY_DOWN)) {
+            if (shop.selectedUpgrade < (int)shop.upgrades.size() - 1) shop.selectedUpgrade++;
+        }
+
+        // Покупка улучшения
+        if (IsKeyPressed(KEY_ENTER)) {
+            BuyUpgrade(shop.selectedUpgrade);
+        }
+
+        // Выход из магазина - возврат в меню
+        if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_M) || IsKeyPressed(KEY_S)) {
+            shop.isActive = false;
+            menu.isActive = true;
+        }
+    }
+
+    void BuyUpgrade(int index) {
+        Upgrade& upgrade = shop.upgrades[index];
+
+        if (upgrade.level < upgrade.maxLevel && shop.totalCoins >= upgrade.cost) {
+            shop.totalCoins -= upgrade.cost;
+            upgrade.level++;
+            upgrade.value += upgrade.increment;
+
+            // Увеличиваем стоимость для следующего уровня
+            upgrade.cost = static_cast<int>(upgrade.cost * 1.5f);
         }
     }
 
@@ -405,7 +805,6 @@ private:
             player.position.y += player.jumpVelocity * GetFrameTime();
             player.jumpVelocity -= player.gravity * GetFrameTime();
 
-            // Проверка приземления
             if (player.position.y <= 1.0f) {
                 player.position.y = 1.0f;
                 player.isJumping = false;
@@ -418,8 +817,7 @@ private:
         // Спавн препятствий
         obstacleSpawnTimer += GetFrameTime();
         if (obstacleSpawnTimer >= obstacleSpawnInterval) {
-            // Случайный выбор: одиночное препятствие или группа
-            if (GetRandomValue(0, 100) < 40) { // 40% chance для группы
+            if (GetRandomValue(0, 100) < 40) {
                 SpawnObstacleGroup();
             }
             else {
@@ -433,14 +831,12 @@ private:
             if (obstacle.active) {
                 obstacle.position.z += obstacle.speed * GetFrameTime();
 
-                // Деактивация прошедших препятствий
                 if (obstacle.position.z > 10.0f) {
                     obstacle.active = false;
                 }
             }
         }
 
-        // Удаление неактивных препятствий
         obstacles.erase(std::remove_if(obstacles.begin(), obstacles.end(),
             [](const Obstacle& o) { return !o.active; }), obstacles.end());
     }
@@ -449,28 +845,32 @@ private:
         Obstacle obstacle;
         obstacle.lane = GetRandomValue(0, 2);
 
-        // Случайный выбор типа препятствия
-        int obstacleType = GetRandomValue(0, 2);
+        int obstacleType = GetRandomValue(0, 3);
         switch (obstacleType) {
         case 0:
             obstacle.type = ObstacleType::JUMP_OVER;
-            obstacle.size = { 1.0f, 2.0f, 1.0f }; // Высокое препятствие
+            obstacle.size = { 1.0f, 1.0f, 1.0f };
             obstacle.color = DARKGRAY;
-            obstacle.texture = jumpObstacleTexture;
             break;
         case 1:
             obstacle.type = ObstacleType::DUCK_UNDER;
-            obstacle.size = { 1.0f, 1.0f, 1.0f }; // Низкое препятствие
+            obstacle.size = { 1.0f, 1.0f, 1.0f };
             obstacle.color = BROWN;
-            obstacle.texture = duckObstacleTexture;
             break;
         case 2:
             obstacle.type = ObstacleType::WALL;
-            obstacle.size = { 1.0f, 3.0f, 1.0f }; // Очень высокое препятствие
+            obstacle.size = { 1.0f, 3.0f, 1.0f };
             obstacle.color = MAROON;
-            obstacle.texture = wallObstacleTexture;
+            break;
+        case 3:
+            obstacle.type = ObstacleType::LOW_BARRIER;
+            obstacle.size = { 1.0f, 2.0f, 1.0f };
+            obstacle.color = { 150, 75, 0, 255 };
             break;
         }
+
+        // Назначаем текстуру в зависимости от локации и типа препятствия
+        obstacle.texture = GetObstacleTexture(obstacle.type);
 
         obstacle.position = { lanePositions[obstacle.lane], obstacle.size.y / 2, -20.0f };
         obstacle.active = true;
@@ -480,14 +880,12 @@ private:
     }
 
     void SpawnObstacleGroup() {
-        // Создаем препятствия на всех трех дорожках
         bool hasPassableLane = false;
         std::vector<ObstacleType> laneTypes(3);
 
-        // Гарантируем, что хотя бы одна дорожка будет проходимой
         do {
             for (int lane = 0; lane < 3; lane++) {
-                int obstacleType = GetRandomValue(0, 2);
+                int obstacleType = GetRandomValue(0, 3);
                 switch (obstacleType) {
                 case 0:
                     laneTypes[lane] = ObstacleType::JUMP_OVER;
@@ -498,19 +896,20 @@ private:
                 case 2:
                     laneTypes[lane] = ObstacleType::WALL;
                     break;
+                case 3:
+                    laneTypes[lane] = ObstacleType::LOW_BARRIER;
+                    break;
                 }
             }
 
-            // Проверяем, есть ли хотя бы одна проходимая дорожка
             for (int lane = 0; lane < 3; lane++) {
                 if (laneTypes[lane] != ObstacleType::WALL) {
                     hasPassableLane = true;
                     break;
                 }
             }
-        } while (!hasPassableLane); // Повторяем, пока не получим валидную комбинацию
+        } while (!hasPassableLane);
 
-        // Создаем препятствия для каждой дорожки
         for (int lane = 0; lane < 3; lane++) {
             Obstacle obstacle;
             obstacle.lane = lane;
@@ -518,21 +917,25 @@ private:
 
             switch (obstacle.type) {
             case ObstacleType::JUMP_OVER:
-                obstacle.size = { 1.0f, 2.0f, 1.0f }; // Высокое препятствие
+                obstacle.size = { 1.0f, 1.0f, 1.0f };
                 obstacle.color = DARKGRAY;
-                obstacle.texture = jumpObstacleTexture;
                 break;
             case ObstacleType::DUCK_UNDER:
-                obstacle.size = { 1.0f, 1.0f, 1.0f }; // Низкое препятствие
+                obstacle.size = { 1.0f, 1.0f, 1.0f };
                 obstacle.color = BROWN;
-                obstacle.texture = duckObstacleTexture;
                 break;
             case ObstacleType::WALL:
-                obstacle.size = { 1.0f, 3.0f, 1.0f }; // Очень высокое препятствие
+                obstacle.size = { 1.0f, 3.0f, 1.0f };
                 obstacle.color = MAROON;
-                obstacle.texture = wallObstacleTexture;
+                break;
+            case ObstacleType::LOW_BARRIER:
+                obstacle.size = { 1.0f, 1.5f, 1.0f };
+                obstacle.color = { 150, 75, 0, 255 };
                 break;
             }
+
+            // Назначаем текстуру в зависимости от локации и типа препятствия
+            obstacle.texture = GetObstacleTexture(obstacle.type);
 
             obstacle.position = { lanePositions[obstacle.lane], obstacle.size.y / 2, -20.0f };
             obstacle.active = true;
@@ -555,6 +958,20 @@ private:
             if (coin.active) {
                 coin.position.z += coin.speed * GetFrameTime();
 
+                // Эффект магнита: монеты притягиваются к игроку
+                if (HasPowerUp(PowerUpType::MAGNET)) {
+                    float magnetRange = 5.0f + (shop.upgrades[2].level * 0.5f);
+                    float dx = player.position.x - coin.position.x;
+                    float dz = player.position.z - coin.position.z;
+                    float distance = sqrt(dx * dx + dz * dz);
+
+                    if (distance < magnetRange && distance > 0.5f) {
+                        float pullStrength = 10.0f;
+                        coin.position.x += (dx / distance) * pullStrength * GetFrameTime();
+                        coin.position.z += (dz / distance) * pullStrength * GetFrameTime();
+                    }
+                }
+
                 if (coin.position.z > 10.0f) {
                     coin.active = false;
                 }
@@ -574,6 +991,120 @@ private:
         coins.push_back(coin);
     }
 
+    void UpdatePowerUps() {
+        // Спавн усилений
+        powerUpSpawnTimer += GetFrameTime();
+        if (powerUpSpawnTimer >= powerUpSpawnInterval) {
+            SpawnPowerUp();
+            powerUpSpawnTimer = 0;
+        }
+
+        // Обновление позиций и анимации усилений
+        for (auto& powerUp : powerUps) {
+            if (powerUp.active) {
+                powerUp.position.z += powerUp.speed * GetFrameTime();
+                powerUp.rotation += 2.0f * GetFrameTime();
+
+                if (powerUp.position.z > 10.0f) {
+                    powerUp.active = false;
+                }
+            }
+        }
+
+        powerUps.erase(std::remove_if(powerUps.begin(), powerUps.end(),
+            [](const PowerUp& p) { return !p.active; }), powerUps.end());
+    }
+
+    void SpawnPowerUp() {
+        PowerUp powerUp;
+        powerUp.position = { lanePositions[GetRandomValue(0, 2)], 1.5f, -20.0f };
+        powerUp.active = true;
+        powerUp.speed = gameSpeed;
+        powerUp.rotation = 0.0f;
+
+        int powerUpType = GetRandomValue(0, 3);
+        switch (powerUpType) {
+        case 0:
+            powerUp.type = PowerUpType::SPEED_BOOST;
+            break;
+        case 1:
+            powerUp.type = PowerUpType::INVINCIBILITY;
+            break;
+        case 2:
+            powerUp.type = PowerUpType::MAGNET;
+            break;
+        case 3:
+            powerUp.type = PowerUpType::DOUBLE_POINTS;
+            break;
+        }
+
+        powerUps.push_back(powerUp);
+    }
+
+    void ApplyPowerUp(PowerUpType type) {
+        float baseDuration = 5.0f;
+        float upgradeBonus = 0.0f;
+
+        switch (type) {
+        case PowerUpType::SPEED_BOOST:
+            upgradeBonus = shop.upgrades[0].value;
+            break;
+        case PowerUpType::INVINCIBILITY:
+            upgradeBonus = shop.upgrades[1].value;
+            break;
+        case PowerUpType::MAGNET:
+            upgradeBonus = shop.upgrades[2].value;
+            break;
+        case PowerUpType::DOUBLE_POINTS:
+            upgradeBonus = shop.upgrades[3].value;
+            break;
+        }
+
+        float totalDuration = baseDuration + upgradeBonus;
+
+        for (auto& activePowerUp : player.activePowerUps) {
+            if (activePowerUp.type == type) {
+                activePowerUp.timer = totalDuration;
+                return;
+            }
+        }
+
+        ActivePowerUp newPowerUp;
+        newPowerUp.type = type;
+        newPowerUp.timer = totalDuration;
+        newPowerUp.duration = totalDuration;
+        player.activePowerUps.push_back(newPowerUp);
+
+        if (type == PowerUpType::SPEED_BOOST) {
+            player.speed = player.originalSpeed * 1.5f;
+        }
+    }
+
+    bool HasPowerUp(PowerUpType type) {
+        for (const auto& activePowerUp : player.activePowerUps) {
+            if (activePowerUp.type == type) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void UpdatePowerUpEffects() {
+        for (auto it = player.activePowerUps.begin(); it != player.activePowerUps.end(); ) {
+            it->timer -= GetFrameTime();
+
+            if (it->timer <= 0) {
+                if (it->type == PowerUpType::SPEED_BOOST) {
+                    player.speed = player.originalSpeed;
+                }
+                it = player.activePowerUps.erase(it);
+            }
+            else {
+                ++it;
+            }
+        }
+    }
+
     void UpdateCamera() {
         camera.target = { player.position.x, player.position.y, player.position.z };
         camera.position = { player.position.x, player.position.y + 3.0f, player.position.z + 8.0f };
@@ -585,7 +1116,6 @@ private:
             { player.position.x + player.size.x / 2, player.position.y + player.size.y / 2, player.position.z + player.size.z / 2 }
         };
 
-        // Проверка столкновений с препятствиями
         for (auto& obstacle : obstacles) {
             if (obstacle.active && player.lane == obstacle.lane) {
                 BoundingBox obstacleBox = {
@@ -594,6 +1124,10 @@ private:
                 };
 
                 if (CheckCollisionBoxes(playerBox, obstacleBox)) {
+                    if (HasPowerUp(PowerUpType::INVINCIBILITY)) {
+                        continue;
+                    }
+
                     bool canAvoid = false;
 
                     switch (obstacle.type) {
@@ -606,6 +1140,10 @@ private:
                     case ObstacleType::WALL:
                         canAvoid = false;
                         break;
+                    case ObstacleType::LOW_BARRIER:
+                        // НИЗКИЙ БАРЬЕР: нельзя перепрыгнуть, можно ТОЛЬКО пригнуться
+                        canAvoid = player.isDucking && !player.isJumping;
+                        break;
                     }
 
                     if (!canAvoid) {
@@ -616,13 +1154,22 @@ private:
             }
         }
 
-        // Проверка сбора монет
         for (auto& coin : coins) {
             if (coin.active) {
                 if (CheckCollisionBoxSphere(playerBox, coin.position, 0.5f)) {
                     coin.active = false;
                     coinsCollected++;
-                    score += 100;
+                    int coinValue = 100 + static_cast<int>(shop.upgrades[4].value);
+                    score += HasPowerUp(PowerUpType::DOUBLE_POINTS) ? coinValue * 2 : coinValue;
+                }
+            }
+        }
+
+        for (auto& powerUp : powerUps) {
+            if (powerUp.active) {
+                if (CheckCollisionBoxSphere(playerBox, powerUp.position, 0.5f)) {
+                    powerUp.active = false;
+                    ApplyPowerUp(powerUp.type);
                 }
             }
         }
@@ -634,9 +1181,12 @@ private:
         player.isJumping = false;
         player.isDucking = false;
         player.jumpVelocity = 0;
+        player.speed = player.originalSpeed;
 
         obstacles.clear();
         coins.clear();
+        powerUps.clear();
+        player.activePowerUps.clear();
 
         score = 0;
         coinsCollected = 0;
@@ -644,19 +1194,37 @@ private:
         environmentOffset = 0.0f;
     }
 
-    void DrawTexturedCube(Vector3 position, Vector3 size, Texture2D texture) {
-        // Рисуем куб с текстурой используя модель
-        Model model = cubeModel;
+    void DrawPowerUp(Vector3 position, PowerUpType type) {
+        Texture2D texture;
+        Color glowColor = WHITE;
 
-        // Применяем текстуру к модели
-        model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = texture;
+        switch (type) {
+        case PowerUpType::SPEED_BOOST:
+            texture = speedBoostTexture;
+            glowColor = ORANGE;
+            break;
+        case PowerUpType::INVINCIBILITY:
+            texture = invincibilityTexture;
+            glowColor = GOLD;
+            break;
+        case PowerUpType::MAGNET:
+            texture = magnetTexture;
+            glowColor = RED;
+            break;
+        case PowerUpType::DOUBLE_POINTS:
+            texture = doublePointsTexture;
+            glowColor = GREEN;
+            break;
+        }
 
-        // Рисуем модель с масштабированием
-        DrawModelEx(model, position, { 0, 1, 0 }, 0.0f, size, WHITE);
+        float scale = 1.0f + 0.2f * sin(GetTime() * 5.0f);
+        Vector3 scaledSize = { scale, scale, scale };
+
+        DrawTexturedCube(position, scaledSize, texture);
+        DrawSphereWires(position, 0.7f, 8, 8, glowColor);
     }
 
     void DrawEnvironment() {
-        // Рисуем окружение в зависимости от локации простыми кубами
         Color envColor;
         Vector3 envSize;
 
@@ -697,13 +1265,9 @@ private:
     }
 
     void Draw3DWorld() {
-        // Рисуем землю
         DrawPlane({ 0.0f, 0.0f, 0.0f }, { 50.0f, 100.0f }, groundColor);
-
-        // Рисуем окружение
         DrawEnvironment();
 
-        // Рисуем дорожки
         for (int i = 0; i < 3; i++) {
             Color laneColor = (i == 1) ? GRAY : DARKGRAY;
             DrawCube({ lanePositions[i], 0.01f, 0.0f }, laneWidth, 0.02f, 100.0f, laneColor);
@@ -711,36 +1275,105 @@ private:
 
         // Рисуем препятствия с текстурами
         for (auto& obstacle : obstacles) {
-            if (obstacle.active && texturesLoaded) {
-                // Рисуем куб с текстурой
-                DrawTexturedCube(obstacle.position, obstacle.size, obstacle.texture);
-
-                // Дополнительно рисуем контур для лучшей видимости
-                DrawCubeWires(obstacle.position, obstacle.size.x, obstacle.size.y, obstacle.size.z, BLACK);
-            }
-            else if (obstacle.active) {
-                // Fallback: рисуем обычный куб если текстуры не загружены
-                DrawCube(obstacle.position, obstacle.size.x, obstacle.size.y, obstacle.size.z, obstacle.color);
-                DrawCubeWires(obstacle.position, obstacle.size.x, obstacle.size.y, obstacle.size.z, BLACK);
-            }
+            DrawObstacle(obstacle);
         }
 
-        // Рисуем монеты
         for (auto& coin : coins) {
             if (coin.active) {
                 DrawSphere(coin.position, 0.5f, GOLD);
             }
         }
 
-        // Рисуем игрока с цветом в зависимости от персонажа
-        Color playerColor;
-        switch (player.characterType) {
-        case 0: playerColor = RED; break;
-        case 1: playerColor = BLACK; break;
-        case 2: playerColor = BLUE; break;
-        case 3: playerColor = PINK; break;
+        for (auto& powerUp : powerUps) {
+            if (powerUp.active) {
+                DrawPowerUp(powerUp.position, powerUp.type);
+            }
         }
-        DrawCube(player.position, player.size.x, player.size.y, player.size.z, playerColor);
+
+        DrawPlayer();
+
+        if (HasPowerUp(PowerUpType::MAGNET)) {
+            float magnetRadius = 2.0f + (shop.upgrades[2].level * 0.3f);
+            DrawSphereWires(player.position, magnetRadius, 8, 8, BLUE);
+        }
+    }
+
+    void DrawPlayer() {
+        Texture2D characterTexture = GetCharacterTexture(player.characterType);
+
+        // Всегда рисуем персонажа с текстурой
+        if (characterTexture.id != 0) {
+            DrawTexturedCube(player.position, player.size, characterTexture);
+        }
+        else {
+            // Если текстура не загрузилась, рисуем цветным кубом
+            Color playerColor;
+            switch (player.characterType) {
+            case 0: playerColor = RED; break;
+            case 1: playerColor = BLACK; break;
+            case 2: playerColor = BLUE; break;
+            case 3: playerColor = PINK; break;
+            }
+
+            if (HasPowerUp(PowerUpType::INVINCIBILITY) && ((int)(GetTime() * 10) % 2 == 0)) {
+                playerColor = GOLD;
+            }
+
+            DrawCube(player.position, player.size.x, player.size.y, player.size.z, playerColor);
+        }
+
+        // Всегда рисуем контуры
+        DrawCubeWires(player.position, player.size.x, player.size.y, player.size.z, BLACK);
+    }
+
+    void DrawShop() {
+        ClearBackground(DARKBLUE);
+
+        DrawText("UPGRADE SHOP", screenWidth / 2 - MeasureText("UPGRADE SHOP", 50) / 2, 50, 50, YELLOW);
+        DrawText(TextFormat("Total Coins: %d", shop.totalCoins), screenWidth / 2 - MeasureText(TextFormat("Total Coins: %d", shop.totalCoins), 30) / 2, 120, 30, GOLD);
+
+        int startY = 180;
+        for (int i = 0; i < (int)shop.upgrades.size(); i++) {
+            const Upgrade& upgrade = shop.upgrades[i];
+            Color textColor = (i == shop.selectedUpgrade) ? GREEN : WHITE;
+            Color levelColor = (upgrade.level < upgrade.maxLevel) ? LIME : GOLD;
+
+            DrawText(TextFormat("%s (Level %d/%d)", upgrade.name.c_str(), upgrade.level, upgrade.maxLevel),
+                100, startY + i * 80, 25, textColor);
+
+            DrawText(upgrade.description.c_str(), 100, startY + i * 80 + 30, 18, LIGHTGRAY);
+
+            std::string effectText;
+            switch (i) {
+            case 0: effectText = TextFormat("Duration: %.1fs", 5.0f + upgrade.value); break;
+            case 1: effectText = TextFormat("Duration: %.1fs", 5.0f + upgrade.value); break;
+            case 2: effectText = TextFormat("Duration: %.1fs | Range: +%.1f", 5.0f + upgrade.value, upgrade.level * 0.5f); break;
+            case 3: effectText = TextFormat("Duration: %.1fs", 5.0f + upgrade.value); break;
+            case 4: effectText = TextFormat("Value: %d", 100 + static_cast<int>(upgrade.value)); break;
+            }
+            DrawText(effectText.c_str(), 100, startY + i * 80 + 50, 16, SKYBLUE);
+
+            if (upgrade.level < upgrade.maxLevel) {
+                Color costColor = (shop.totalCoins >= upgrade.cost) ? GREEN : RED;
+                DrawText(TextFormat("Cost: %d coins", upgrade.cost), screenWidth - 250, startY + i * 80 + 20, 20, costColor);
+
+                if (i == shop.selectedUpgrade) {
+                    DrawText("[ENTER] TO BUY", screenWidth - 250, startY + i * 80 + 45, 18, YELLOW);
+                }
+            }
+            else {
+                DrawText("MAX LEVEL", screenWidth - 250, startY + i * 80 + 20, 20, GOLD);
+            }
+
+            if (i == shop.selectedUpgrade) {
+                DrawRectangle(90, startY + i * 80 - 5, screenWidth - 180, 70, Fade(BLUE, 0.2f));
+                DrawRectangleLines(90, startY + i * 80 - 5, screenWidth - 180, 70, BLUE);
+            }
+        }
+
+        DrawText("USE ARROWS TO NAVIGATE", screenWidth / 2 - MeasureText("USE ARROWS TO NAVIGATE", 20) / 2, screenHeight - 80, 20, LIGHTGRAY);
+        DrawText("PRESS ENTER TO BUY UPGRADE", screenWidth / 2 - MeasureText("PRESS ENTER TO BUY UPGRADE", 20) / 2, screenHeight - 50, 20, LIGHTGRAY);
+        DrawText("PRESS ESC, M OR S TO RETURN TO MENU", screenWidth / 2 - MeasureText("PRESS ESC, M OR S TO RETURN TO MENU", 20) / 2, screenHeight - 20, 20, LIGHTGRAY);
     }
 
     void Draw() {
@@ -750,13 +1383,17 @@ private:
         if (menu.isActive) {
             DrawMenu();
         }
+        else if (shop.isActive) {
+            DrawShop();
+        }
         else if (gameOver) {
-            // Экран Game Over
             DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.5f));
-            DrawText("GAME OVER", screenWidth / 2 - MeasureText("GAME OVER", 40) / 2, screenHeight / 2 - 50, 40, RED);
-            DrawText(TextFormat("Final Score: %d", score), screenWidth / 2 - MeasureText(TextFormat("Final Score: %d", score), 20) / 2, screenHeight / 2, 20, WHITE);
+            DrawText("GAME OVER", screenWidth / 2 - MeasureText("GAME OVER", 40) / 2, screenHeight / 2 - 80, 40, RED);
+            DrawText(TextFormat("Final Score: %d", score), screenWidth / 2 - MeasureText(TextFormat("Final Score: %d", score), 20) / 2, screenHeight / 2 - 30, 20, WHITE);
+            DrawText(TextFormat("Coins Collected: %d", coinsCollected), screenWidth / 2 - MeasureText(TextFormat("Coins Collected: %d", coinsCollected), 20) / 2, screenHeight / 2, 20, GOLD);
             DrawText("Press R to restart", screenWidth / 2 - MeasureText("Press R to restart", 20) / 2, screenHeight / 2 + 30, 20, WHITE);
             DrawText("Press M for menu", screenWidth / 2 - MeasureText("Press M for menu", 20) / 2, screenHeight / 2 + 60, 20, WHITE);
+            DrawText("Press S for shop", screenWidth / 2 - MeasureText("Press S for shop", 20) / 2, screenHeight / 2 + 90, 20, GREEN);
         }
         else {
             BeginMode3D(camera);
@@ -765,28 +1402,62 @@ private:
 
             EndMode3D();
 
-            // Рисуем UI
             DrawText(TextFormat("Score: %d", score), 10, 10, 20, BLACK);
             DrawText(TextFormat("Coins: %d", coinsCollected), 10, 40, 20, BLACK);
             DrawText(TextFormat("Lane: %d", player.lane + 1), 10, 70, 20, BLACK);
             DrawText(TextFormat("Location: %s", menu.locations[menu.selectedLocation].c_str()), 10, 100, 15, DARKGRAY);
             DrawText(TextFormat("Character: %s", menu.characters[player.characterType].c_str()), 10, 120, 15, DARKGRAY);
 
-            // Подсказки по управлению
-            DrawText("JUMP: SPACE/UP", 10, 150, 15, DARKGREEN);
-            DrawText("DUCK: DOWN", 10, 170, 15, DARKBLUE);
-            DrawText("MOVE: LEFT/RIGHT", 10, 190, 15, DARKPURPLE);
-            DrawText("MENU: M", 10, 210, 15, DARKBROWN);
+            int powerUpY = 150;
+            if (!player.activePowerUps.empty()) {
+                DrawText("ACTIVE POWER-UPS:", 10, powerUpY, 15, DARKPURPLE);
+                powerUpY += 20;
 
-            // Подсказки для препятствий
-            DrawText("Obstacles:", 10, 240, 15, BLACK);
-            DrawText("▲ - Jump Over", 10, 260, 12, DARKGREEN);
-            DrawText("▼ - Duck Under", 10, 275, 12, DARKBLUE);
-            DrawText("✕ - Wall (Avoid)", 10, 290, 12, RED);
+                for (const auto& activePowerUp : player.activePowerUps) {
+                    std::string powerUpName;
+                    Color powerUpColor;
 
-            // Информация о случайных препятствиях
-            DrawText("Obstacles spawn randomly!", 10, 320, 15, DARKPURPLE);
-            DrawText("Sometimes in groups of 3", 10, 340, 12, DARKGREEN);
+                    switch (activePowerUp.type) {
+                    case PowerUpType::SPEED_BOOST:
+                        powerUpName = "SPEED BOOST";
+                        powerUpColor = ORANGE;
+                        break;
+                    case PowerUpType::INVINCIBILITY:
+                        powerUpName = "INVINCIBILITY";
+                        powerUpColor = GOLD;
+                        break;
+                    case PowerUpType::MAGNET:
+                        powerUpName = "COIN MAGNET";
+                        powerUpColor = BLUE;
+                        break;
+                    case PowerUpType::DOUBLE_POINTS:
+                        powerUpName = "DOUBLE POINTS";
+                        powerUpColor = GREEN;
+                        break;
+                    }
+
+                    DrawText(TextFormat("%s: %.1fs", powerUpName.c_str(), activePowerUp.timer),
+                        10, powerUpY, 15, powerUpColor);
+                    powerUpY += 20;
+                }
+            }
+
+            DrawText("JUMP: SPACE/UP", 10, powerUpY, 15, DARKGREEN);
+            DrawText("DUCK: DOWN", 10, powerUpY + 20, 15, DARKBLUE);
+            DrawText("MOVE: LEFT/RIGHT", 10, powerUpY + 40, 15, DARKPURPLE);
+            DrawText("MENU: M", 10, powerUpY + 60, 15, DARKBROWN);
+
+            DrawText("Obstacles:", 10, powerUpY + 90, 15, BLACK);
+            DrawText("▲ - Jump Over", 10, powerUpY + 110, 12, DARKGREEN);
+            DrawText("▼ - Duck Under", 10, powerUpY + 125, 12, DARKBLUE);
+            DrawText("✕ - Wall (Avoid)", 10, powerUpY + 140, 12, RED);
+            DrawText("▬ - Low Barrier (Duck)", 10, powerUpY + 155, 12, ORANGE);
+
+            DrawText("Power-Ups:", 10, powerUpY + 175, 15, BLACK);
+            DrawText("⚡ - Speed Boost", 10, powerUpY + 195, 12, ORANGE);
+            DrawText("★ - Invincibility", 10, powerUpY + 210, 12, GOLD);
+            DrawText("🧲 - Coin Magnet", 10, powerUpY + 225, 12, BLUE);
+            DrawText("2X - Double Points", 10, powerUpY + 240, 12, GREEN);
         }
 
         EndDrawing();
@@ -795,26 +1466,24 @@ private:
     void DrawMenu() {
         ClearBackground(DARKBLUE);
 
-        // Заголовок
-        DrawText("RUNNER 3D", screenWidth / 2 - MeasureText("RUNNER 3D", 40) / 2, 50, 40, YELLOW);
+        DrawText("RUNNER 3D WITH CHARACTER TEXTURES", screenWidth / 2 - MeasureText("RUNNER 3D WITH CHARACTER TEXTURES", 40) / 2, 50, 40, YELLOW);
+        DrawText(TextFormat("Total Coins: %d", shop.totalCoins), screenWidth / 2 - MeasureText(TextFormat("Total Coins: %d", shop.totalCoins), 30) / 2, 100, 30, GOLD);
 
-        // Выбор локации
         DrawText("SELECT LOCATION:", screenWidth / 2 - MeasureText("SELECT LOCATION:", 30) / 2, 150, 30, WHITE);
         for (int i = 0; i < (int)menu.locations.size(); i++) {
             Color color = (i == menu.selectedLocation) ? GREEN : WHITE;
             DrawText(menu.locations[i].c_str(), screenWidth / 2 - MeasureText(menu.locations[i].c_str(), 25) / 2, 200 + i * 40, 25, color);
         }
 
-        // Выбор персонажа
         DrawText("SELECT CHARACTER: (A/D to change)", screenWidth / 2 - MeasureText("SELECT CHARACTER: (A/D to change)", 30) / 2, 350, 30, WHITE);
         for (int i = 0; i < (int)menu.characters.size(); i++) {
             Color color = (i == menu.selectedCharacter) ? GREEN : WHITE;
             DrawText(menu.characters[i].c_str(), screenWidth / 2 - MeasureText(menu.characters[i].c_str(), 25) / 2, 400 + i * 40, 25, color);
         }
 
-        // Инструкции
         DrawText("PRESS ENTER TO START", screenWidth / 2 - MeasureText("PRESS ENTER TO START", 30) / 2, 550, 30, YELLOW);
         DrawText("USE ARROWS TO NAVIGATE", screenWidth / 2 - MeasureText("USE ARROWS TO NAVIGATE", 20) / 2, 600, 20, LIGHTGRAY);
+        DrawText("PRESS S FOR UPGRADE SHOP", screenWidth / 2 - MeasureText("PRESS S FOR UPGRADE SHOP", 20) / 2, 630, 20, LIME);
     }
 };
 
