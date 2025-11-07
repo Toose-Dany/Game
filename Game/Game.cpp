@@ -89,6 +89,7 @@ struct PowerUp {
     float speed;
     PowerUpType type;
     float rotation; // Для анимации вращения
+    Texture2D texture; // Текстура для способности
 };
 
 // Структура для локации
@@ -96,10 +97,15 @@ struct Location {
     std::string name;
     Color backgroundColor;
     Color groundColor;
+    Color leftLaneColor;   // Цвет левой полосы
+    Color middleLaneColor; // Цвет средней полосы
+    Color rightLaneColor;  // Цвет правой полосы
     Texture2D jumpTexture;
     Texture2D duckTexture;
     Texture2D wallTexture;
     Texture2D lowBarrierTexture;
+    Texture2D leftEnvironmentTexture;
+    Texture2D rightEnvironmentTexture;
 };
 
 // Структура для персонажа
@@ -122,12 +128,31 @@ struct Menu {
         selectedLocation = 0;
         selectedCharacter = 0;
 
-        // Инициализация локаций с текстурами
+        // Инициализация локаций с цветами для каждой полосы
         locations = {
-            {"City", SKYBLUE, GRAY, {0}, {0}, {0}, {0}},
-            {"Forest", DARKGREEN, GREEN, {0}, {0}, {0}, {0}},
-            {"Desert",  { 240, 200, 150, 255 },  { 210, 180, 140, 255 }, {0}, {0}, {0}, {0}},
-            {"Winter", { 200, 220, 240, 255 }, WHITE, {0}, {0}, {0}, {0}}
+            {"City", SKYBLUE, GRAY,
+             DARKGRAY,    // Левая полоса - темно-серая
+             GRAY,        // Средняя полоса - серая
+             DARKGRAY,    // Правая полоса - темно-серая
+             {0}, {0}, {0}, {0}, {0}, {0}},
+
+            {"Forest", DARKGREEN, DARKGREEN,
+             BROWN,   // Левая полоса - темно-зеленая
+             { 210, 180, 140, 255 },       // Средняя полоса - зеленая
+             BROWN,   // Правая полоса - темно-зеленая
+             {0}, {0}, {0}, {0}, {0}, {0}},
+
+            {"Desert", { 240, 200, 150, 255 }, { 210, 180, 140, 255 },
+             { 180, 160, 120, 255 },  // Левая полоса - темно-песочная
+             { 210, 180, 140, 255 },  // Средняя полоса - песочная
+             { 180, 160, 120, 255 },  // Правая полоса - темно-песочная
+             {0}, {0}, {0}, {0}, {0}, {0}},
+
+            {"Winter", { 200, 220, 240, 255 }, WHITE,
+             { 150, 150, 150, 255 },  // Левая полоса - серый
+             WHITE,                    // Средняя полоса - белый
+             { 150, 150, 150, 255 },  // Правая полоса - серый
+             {0}, {0}, {0}, {0}, {0}, {0}}
         };
 
         // Инициализация персонажей с текстурами
@@ -194,13 +219,17 @@ private:
     Shop shop;
     float environmentOffset;
 
-    // Текстуры для усилений
+    // Текстуры для способностей (одинаковые на всех локациях)
     Texture2D speedBoostTexture;
     Texture2D invincibilityTexture;
     Texture2D magnetTexture;
     Texture2D doublePointsTexture;
 
     bool texturesLoaded;
+
+    // Константа для дальности спавна
+    const float spawnDistance = -40.0f;
+    const float despawnDistance = 20.0f;
 
 public:
     Game() {
@@ -218,16 +247,16 @@ public:
         player.color = RED;
         player.speed = 5.0f;
         player.lane = 1;
-        player.targetLane = 1; // Начинаем с той же полосы
+        player.targetLane = 1;
         player.isJumping = false;
-        player.isRolling = false; // ЗАМЕНА: вместо isDucking теперь isRolling
+        player.isRolling = false;
         player.jumpVelocity = 0;
         player.gravity = 15.0f;
         player.characterType = 0;
         player.isOnObstacle = false;
-        player.laneChangeSpeed = 15.0f; // УВЕЛИЧЕНА СКОРОСТЬ ПЕРЕМЕЩЕНИЯ МЕЖДУ ПОЛОСАМИ (было 8.0f)
-        player.rollCooldownTimer = 0.0f; // ИНИЦИАЛИЗАЦИЯ таймера кулдауна
-        player.rollDuration = 0.0f; // ИНИЦИАЛИЗАЦИЯ длительности переката
+        player.laneChangeSpeed = 15.0f;
+        player.rollCooldownTimer = 0.0f;
+        player.rollDuration = 0.0f;
 
         // Инициализация эффектов усилений
         player.originalSpeed = player.speed;
@@ -269,7 +298,7 @@ public:
         // Выгружаем текстуры персонажей
         UnloadCharacterTextures();
 
-        // Выгружаем текстуры усилений
+        // Выгружаем текстуры способностей
         UnloadTexture(speedBoostTexture);
         UnloadTexture(invincibilityTexture);
         UnloadTexture(magnetTexture);
@@ -288,35 +317,77 @@ public:
 private:
     void UnloadLocationTextures() {
         for (auto& location : menu.locations) {
-            if (location.jumpTexture.id != 0) UnloadTexture(location.jumpTexture);
-            if (location.duckTexture.id != 0) UnloadTexture(location.duckTexture);
-            if (location.wallTexture.id != 0) UnloadTexture(location.wallTexture);
-            if (location.lowBarrierTexture.id != 0) UnloadTexture(location.lowBarrierTexture);
+            if (IsTextureReady(location.jumpTexture)) UnloadTexture(location.jumpTexture);
+            if (IsTextureReady(location.duckTexture)) UnloadTexture(location.duckTexture);
+            if (IsTextureReady(location.wallTexture)) UnloadTexture(location.wallTexture);
+            if (IsTextureReady(location.lowBarrierTexture)) UnloadTexture(location.lowBarrierTexture);
+            if (IsTextureReady(location.leftEnvironmentTexture)) UnloadTexture(location.leftEnvironmentTexture);
+            if (IsTextureReady(location.rightEnvironmentTexture)) UnloadTexture(location.rightEnvironmentTexture);
         }
     }
 
     void UnloadCharacterTextures() {
         for (auto& character : menu.characters) {
-            if (character.texture.id != 0) UnloadTexture(character.texture);
+            if (IsTextureReady(character.texture)) UnloadTexture(character.texture);
         }
     }
 
+    bool IsTextureReady(Texture2D texture) const {
+        return texture.id != 0 && texture.width > 0 && texture.height > 0;
+    }
+
     void LoadTextures() {
-        // Загружаем текстуры для каждой локации
-        LoadLocationTextures();
+        // ДОБАВЛЕНО: выгружаем старые текстуры если они уже загружены
+        if (texturesLoaded) {
+            UnloadLocationTextures();
+            UnloadCharacterTextures();
+            UnloadTexture(speedBoostTexture);
+            UnloadTexture(invincibilityTexture);
+            UnloadTexture(magnetTexture);
+            UnloadTexture(doublePointsTexture);
+        }
 
-        // Загружаем текстуры для каждого персонажа
-        LoadCharacterTextures();
+        // Загружаем текстуры способностей (одинаковые для всех локаций)
+        LoadPowerUpTextures();
 
-        // Создаем текстуры для усилений
-        speedBoostTexture = CreateSpeedBoostTexture();
-        invincibilityTexture = CreateInvincibilityTexture();
-        magnetTexture = CreateMagnetTexture();
-        doublePointsTexture = CreateDoublePointsTexture();
+        // ПОПЫТКА ЗАГРУЗИТЬ ТЕКСТУРЫ, НО НЕ БЛОКИРУЕМ ЗАПУСК
+        try {
+            LoadLocationTextures();
+            LoadCharacterTextures();
+        }
+        catch (...) {
+            TraceLog(LOG_WARNING, "Some textures failed to load, using defaults");
+        }
 
         texturesLoaded = AreTexturesLoaded();
 
         TraceLog(LOG_INFO, "All textures loaded: %s", texturesLoaded ? "YES" : "NO");
+    }
+
+    // Функция для загрузки текстур способностей
+    void LoadPowerUpTextures() {
+        // Пытаемся загрузить пользовательские текстуры, если они существуют
+        LoadPowerUpTexture("speed_boost.png", speedBoostTexture, CreateSpeedBoostTexture());
+        LoadPowerUpTexture("invincibility.png", invincibilityTexture, CreateInvincibilityTexture());
+        LoadPowerUpTexture("magnet.png", magnetTexture, CreateMagnetTexture());
+        LoadPowerUpTexture("double_points.png", doublePointsTexture, CreateDoublePointsTexture());
+    }
+
+    // Функция для загрузки текстуры способности с fallback
+    void LoadPowerUpTexture(const char* filepath, Texture2D& texture, Texture2D defaultTexture) {
+        if (FileExists(filepath)) {
+            Image image = LoadImage(filepath);
+            if (image.data != NULL) {
+                texture = LoadTextureFromImage(image);
+                UnloadImage(image);
+                TraceLog(LOG_INFO, "Successfully loaded power-up texture: %s", filepath);
+                return;
+            }
+        }
+
+        // Если файл не найден или не загружен, используем дефолтную текстуру
+        texture = defaultTexture;
+        TraceLog(LOG_WARNING, "Power-up texture not found: %s, using default", filepath);
     }
 
     void LoadLocationTextures() {
@@ -326,24 +397,32 @@ private:
         LoadObstacleTexture("city_duck.png", menu.locations[0].duckTexture);
         LoadObstacleTexture("city_wall.png", menu.locations[0].wallTexture);
         LoadObstacleTexture("city_barrier.png", menu.locations[0].lowBarrierTexture);
+        LoadEnvironmentTexture("city_left.png", menu.locations[0].leftEnvironmentTexture);
+        LoadEnvironmentTexture("city_right.png", menu.locations[0].rightEnvironmentTexture);
 
         // Forest
         LoadObstacleTexture("forest_jump.png", menu.locations[1].jumpTexture);
         LoadObstacleTexture("forest_duck.png", menu.locations[1].duckTexture);
         LoadObstacleTexture("forest_wall.png", menu.locations[1].wallTexture);
         LoadObstacleTexture("forest_barrier.png", menu.locations[1].lowBarrierTexture);
+        LoadEnvironmentTexture("forest_left.png", menu.locations[1].leftEnvironmentTexture);
+        LoadEnvironmentTexture("forest_right.png", menu.locations[1].rightEnvironmentTexture);
 
         // Desert
         LoadObstacleTexture("desert_jump.png", menu.locations[2].jumpTexture);
         LoadObstacleTexture("desert_duck.png", menu.locations[2].duckTexture);
         LoadObstacleTexture("desert_wall.png", menu.locations[2].wallTexture);
         LoadObstacleTexture("desert_barrier.png", menu.locations[2].lowBarrierTexture);
+        LoadEnvironmentTexture("desert_left.png", menu.locations[2].leftEnvironmentTexture);
+        LoadEnvironmentTexture("desert_right.png", menu.locations[2].rightEnvironmentTexture);
 
         // Winter
         LoadObstacleTexture("winter_jump.png", menu.locations[3].jumpTexture);
         LoadObstacleTexture("winter_duck.png", menu.locations[3].duckTexture);
         LoadObstacleTexture("winter_wall.png", menu.locations[3].wallTexture);
         LoadObstacleTexture("winter_barrier.png", menu.locations[3].lowBarrierTexture);
+        LoadEnvironmentTexture("winter_left.png", menu.locations[3].leftEnvironmentTexture);
+        LoadEnvironmentTexture("winter_right.png", menu.locations[3].rightEnvironmentTexture);
     }
 
     void LoadCharacterTextures() {
@@ -354,11 +433,56 @@ private:
         LoadCharacterTexture("girl_character.png", menu.characters[3].texture);
     }
 
+    void LoadEnvironmentTexture(const char* filepath, Texture2D& texture) {
+        if (FileExists(filepath)) {
+            Image image = LoadImage(filepath);
+            if (image.data != NULL) {
+                texture = LoadTextureFromImage(image);
+                UnloadImage(image);
+                TraceLog(LOG_INFO, "Successfully loaded environment texture: %s", filepath);
+            }
+            else {
+                TraceLog(LOG_ERROR, "Failed to load environment image: %s", filepath);
+                texture = CreateDefaultEnvironmentTexture();
+            }
+        }
+        else {
+            TraceLog(LOG_WARNING, "Environment texture not found: %s, using default", filepath);
+            texture = CreateDefaultEnvironmentTexture();
+        }
+    }
+
+    Texture2D CreateDefaultEnvironmentTexture() {
+        Image image = GenImageColor(128, 256, BLANK);
+        Color baseColor = GRAY;
+
+        for (int y = 0; y < 256; y++) {
+            for (int x = 0; x < 128; x++) {
+                Color color = baseColor;
+
+                // Создаем простой узор для текстуры по умолчанию
+                if ((x / 16 + y / 16) % 2 == 0) {
+                    color = ColorBrightness(baseColor, 0.8f);
+                }
+
+                // Добавляем детали в зависимости от высоты (имитация окон/узоров)
+                if (x % 16 == 0 || y % 16 == 0) {
+                    color = ColorBrightness(baseColor, 0.6f);
+                }
+
+                ImageDrawPixel(&image, x, y, color);
+            }
+        }
+
+        Texture2D texture = LoadTextureFromImage(image);
+        UnloadImage(image);
+        return texture;
+    }
+
     void LoadObstacleTexture(const char* filepath, Texture2D& texture) {
         if (FileExists(filepath)) {
             Image image = LoadImage(filepath);
             if (image.data != NULL) {
-                ImageFlipVertical(&image);
                 texture = LoadTextureFromImage(image);
                 UnloadImage(image);
                 TraceLog(LOG_INFO, "Successfully loaded obstacle texture: %s", filepath);
@@ -393,7 +517,6 @@ private:
         if (FileExists(filepath)) {
             Image image = LoadImage(filepath);
             if (image.data != NULL) {
-                ImageFlipVertical(&image); // Важно: переворачиваем текстуру
                 texture = LoadTextureFromImage(image);
                 UnloadImage(image);
                 TraceLog(LOG_INFO, "Successfully loaded character texture: %s", filepath);
@@ -448,25 +571,14 @@ private:
     }
 
     bool AreTexturesLoaded() const {
-        // Проверяем, что все основные текстуры загружены
-        bool locationsLoaded = true;
-        for (const auto& location : menu.locations) {
-            if (location.jumpTexture.id == 0 || location.duckTexture.id == 0) {
-                locationsLoaded = false;
-                break;
-            }
-        }
+        // ПРОСТАЯ ПРОВЕРКА ОСНОВНЫХ ТЕКСТУР
+        bool basicTexturesLoaded =
+            IsTextureReady(speedBoostTexture) &&
+            IsTextureReady(invincibilityTexture) &&
+            IsTextureReady(magnetTexture) &&
+            IsTextureReady(doublePointsTexture);
 
-        bool charactersLoaded = true;
-        for (const auto& character : menu.characters) {
-            if (character.texture.id == 0) {
-                charactersLoaded = false;
-                break;
-            }
-        }
-
-        return locationsLoaded && charactersLoaded &&
-            speedBoostTexture.id != 0 && invincibilityTexture.id != 0;
+        return basicTexturesLoaded;
     }
 
     Texture2D GetObstacleTexture(ObstacleType type) {
@@ -474,17 +586,39 @@ private:
         const Location& currentLocation = menu.locations[menu.selectedLocation];
 
         switch (type) {
-        case ObstacleType::JUMP_OVER: return currentLocation.jumpTexture;
-        case ObstacleType::DUCK_UNDER: return currentLocation.duckTexture;
-        case ObstacleType::WALL: return currentLocation.wallTexture;
-        case ObstacleType::LOW_BARRIER: return currentLocation.lowBarrierTexture;
-        default: return currentLocation.jumpTexture;
+        case ObstacleType::JUMP_OVER:
+            return IsTextureReady(currentLocation.jumpTexture) ? currentLocation.jumpTexture : CreateDefaultObstacleTexture();
+        case ObstacleType::DUCK_UNDER:
+            return IsTextureReady(currentLocation.duckTexture) ? currentLocation.duckTexture : CreateDefaultObstacleTexture();
+        case ObstacleType::WALL:
+            return IsTextureReady(currentLocation.wallTexture) ? currentLocation.wallTexture : CreateDefaultObstacleTexture();
+        case ObstacleType::LOW_BARRIER:
+            return IsTextureReady(currentLocation.lowBarrierTexture) ? currentLocation.lowBarrierTexture : CreateDefaultObstacleTexture();
+        default:
+            return CreateDefaultObstacleTexture();
+        }
+    }
+
+    // Функция для получения текстуры способности (одинаковая на всех локациях)
+    Texture2D GetPowerUpTexture(PowerUpType type) {
+        switch (type) {
+        case PowerUpType::SPEED_BOOST:
+            return IsTextureReady(speedBoostTexture) ? speedBoostTexture : CreateSpeedBoostTexture();
+        case PowerUpType::INVINCIBILITY:
+            return IsTextureReady(invincibilityTexture) ? invincibilityTexture : CreateInvincibilityTexture();
+        case PowerUpType::MAGNET:
+            return IsTextureReady(magnetTexture) ? magnetTexture : CreateMagnetTexture();
+        case PowerUpType::DOUBLE_POINTS:
+            return IsTextureReady(doublePointsTexture) ? doublePointsTexture : CreateDoublePointsTexture();
+        default:
+            return CreateSpeedBoostTexture();
         }
     }
 
     Texture2D GetCharacterTexture() {
         // Возвращаем текстуру для выбранного персонажа
-        return menu.characters[player.characterType].texture;
+        Texture2D charTexture = menu.characters[player.characterType].texture;
+        return IsTextureReady(charTexture) ? charTexture : CreateDefaultCharacterTexture();
     }
 
     Color GetCurrentBackgroundColor() {
@@ -495,7 +629,20 @@ private:
         return menu.locations[menu.selectedLocation].groundColor;
     }
 
-    // Функции создания текстур для усилений
+    // НОВЫЕ ФУНКЦИИ: получение цветов для каждой полосы
+    Color GetLeftLaneColor() {
+        return menu.locations[menu.selectedLocation].leftLaneColor;
+    }
+
+    Color GetMiddleLaneColor() {
+        return menu.locations[menu.selectedLocation].middleLaneColor;
+    }
+
+    Color GetRightLaneColor() {
+        return menu.locations[menu.selectedLocation].rightLaneColor;
+    }
+
+    // Функции создания текстур для усилений (3D объекты)
     Texture2D CreateSpeedBoostTexture() {
         Image image = GenImageColor(64, 64, BLANK);
         for (int y = 0; y < 64; y++) {
@@ -605,16 +752,26 @@ private:
         float height = size.y;
         float length = size.z;
 
+        // ИСПРАВЛЕНИЕ: ПРОВЕРКА ВАЛИДНОСТИ ТЕКСТУРЫ
+        if (!IsTextureReady(texture)) {
+            // Если текстура не загружена, рисуем простой куб
+            DrawCube(position, width, height, length, color);
+            DrawCubeWires(position, width, height, length, BLACK);
+            return;
+        }
+
         rlSetTexture(texture.id);
         rlBegin(RL_QUADS);
+
+        // ИСПРАВЛЕНИЕ: изменен порядок текстурных координат для правильной ориентации
         rlColor4ub(color.r, color.g, color.b, color.a);
 
-        // ТОЛЬКО ПЕРЕДНЯЯ ГРАНЬ (убраны остальные грани)
+        // ПЕРЕДНЯЯ ГРАНЬ - исправленные координаты
         rlNormal3f(0.0f, 0.0f, 1.0f);
-        rlTexCoord2f(0.0f, 0.0f); rlVertex3f(x - width / 2, y - height / 2, z + length / 2);
-        rlTexCoord2f(1.0f, 0.0f); rlVertex3f(x + width / 2, y - height / 2, z + length / 2);
-        rlTexCoord2f(1.0f, 1.0f); rlVertex3f(x + width / 2, y + height / 2, z + length / 2);
-        rlTexCoord2f(0.0f, 1.0f); rlVertex3f(x - width / 2, y + height / 2, z + length / 2);
+        rlTexCoord2f(0.0f, 1.0f); rlVertex3f(x - width / 2, y - height / 2, z + length / 2);
+        rlTexCoord2f(1.0f, 1.0f); rlVertex3f(x + width / 2, y - height / 2, z + length / 2);
+        rlTexCoord2f(1.0f, 0.0f); rlVertex3f(x + width / 2, y + height / 2, z + length / 2);
+        rlTexCoord2f(0.0f, 0.0f); rlVertex3f(x - width / 2, y + height / 2, z + length / 2);
 
         rlEnd();
         rlSetTexture(0);
@@ -622,14 +779,136 @@ private:
 
     void DrawObstacle(const Obstacle& obstacle) {
         if (obstacle.active) {
-            if (texturesLoaded && obstacle.texture.id != 0) {
+            // ИСПРАВЛЕНИЕ: улучшенная проверка текстур
+            if (texturesLoaded && IsTextureReady(obstacle.texture)) {
                 DrawCubeTexture(obstacle.position, obstacle.size, obstacle.texture, RAYWHITE);
             }
             else {
-                // Fallback - рисуем цветной куб если текстура не загружена (только переднюю грань)
-                DrawCubeTexture(obstacle.position, obstacle.size, CreateDefaultObstacleTexture(), obstacle.color);
+                // Fallback - рисуем простой цветной куб если текстура не загружена
+                DrawCube(obstacle.position, obstacle.size.x, obstacle.size.y, obstacle.size.z, obstacle.color);
+                DrawCubeWires(obstacle.position, obstacle.size.x, obstacle.size.y, obstacle.size.z, BLACK);
             }
-            // УБРАНА ОБВОДКА: DrawCubeWires(obstacle.position, obstacle.size.x, obstacle.size.y, obstacle.size.z, BLACK);
+        }
+    }
+
+    // Функция для отрисовки способности с текстурой
+    void DrawPowerUp(const PowerUp& powerUp) {
+        if (powerUp.active) {
+            // ИСПРАВЛЕНИЕ: улучшенная проверка текстур
+            if (texturesLoaded && IsTextureReady(powerUp.texture)) {
+                // Добавляем анимацию вращения и пульсации
+                float scale = 1.0f + 0.2f * sin(GetTime() * 5.0f);
+                Vector3 scaledSize = { scale, scale, scale };
+
+                DrawCubeTexture(powerUp.position, scaledSize, powerUp.texture, RAYWHITE);
+            }
+            else {
+                // Fallback - рисуем простую сферу если текстура не загружена
+                Color powerUpColor;
+                switch (powerUp.type) {
+                case PowerUpType::SPEED_BOOST: powerUpColor = ORANGE; break;
+                case PowerUpType::INVINCIBILITY: powerUpColor = GOLD; break;
+                case PowerUpType::MAGNET: powerUpColor = BLUE; break;
+                case PowerUpType::DOUBLE_POINTS: powerUpColor = GREEN; break;
+                default: powerUpColor = WHITE;
+                }
+                DrawSphere(powerUp.position, 0.7f, powerUpColor);
+            }
+        }
+    }
+
+    // НОВОЕ: Функция для отрисовки окружения с учетом локации
+    void DrawEnvironment() {
+        const Location& currentLocation = menu.locations[menu.selectedLocation];
+
+        switch (menu.selectedLocation) {
+        case 0: // City - здания (близко к дороге)
+        {
+            Vector3 envSize = { 3.0f, 8.0f, 3.0f };
+            for (int i = -5; i <= 5; i++) {
+                // Левая сторона с текстурой
+                if (IsTextureReady(currentLocation.leftEnvironmentTexture)) {
+                    DrawCubeTexture({ -8.0f, 4.0f, i * 10.0f + environmentOffset }, envSize, currentLocation.leftEnvironmentTexture, RAYWHITE);
+                }
+                else {
+                    DrawCube({ -8.0f, 4.0f, i * 10.0f + environmentOffset }, envSize.x, envSize.y, envSize.z, GRAY);
+                }
+                // Правая сторона с текстурой
+                if (IsTextureReady(currentLocation.rightEnvironmentTexture)) {
+                    DrawCubeTexture({ 8.0f, 4.0f, i * 10.0f + environmentOffset }, envSize, currentLocation.rightEnvironmentTexture, RAYWHITE);
+                }
+                else {
+                    DrawCube({ 8.0f, 4.0f, i * 10.0f + environmentOffset }, envSize.x, envSize.y, envSize.z, GRAY);
+                }
+            }
+        }
+        break;
+
+        case 1: // Forest - деревья (дальше от дороги)
+        {
+            Vector3 envSize = { 2.0f, 6.0f, 2.0f };
+            for (int i = -5; i <= 5; i++) {
+                // Левая сторона с текстурой - дальше от дороги
+                if (IsTextureReady(currentLocation.leftEnvironmentTexture)) {
+                    DrawCubeTexture({ -8.0f, 3.0f, i * 8.0f + environmentOffset }, envSize, currentLocation.leftEnvironmentTexture, RAYWHITE);
+                }
+                else {
+                    DrawCube({ -8.0f, 3.0f, i * 8.0f + environmentOffset }, envSize.x, envSize.y, envSize.z, GREEN);
+                }
+                // Правая сторона с текстурой - дальше от дороги
+                if (IsTextureReady(currentLocation.rightEnvironmentTexture)) {
+                    DrawCubeTexture({ 8.0f, 3.0f, i * 8.0f + environmentOffset }, envSize, currentLocation.rightEnvironmentTexture, RAYWHITE);
+                }
+                else {
+                    DrawCube({ 8.0f, 3.0f, i * 8.0f + environmentOffset }, envSize.x, envSize.y, envSize.z, GREEN);
+                }
+            }
+        }
+        break;
+
+        case 2: // Desert - камни (еще дальше от дороги)
+        {
+            Vector3 envSize = { 4.0f, 4.0f, 4.0f };
+            for (int i = -5; i <= 5; i++) {
+                // Левая сторона с текстурой - еще дальше от дороги
+                if (IsTextureReady(currentLocation.leftEnvironmentTexture)) {
+                    DrawCubeTexture({ -8.0f, 2.0f, i * 12.0f + environmentOffset }, envSize, currentLocation.leftEnvironmentTexture, RAYWHITE);
+                }
+                else {
+                    DrawCube({ -8.0f, 2.0f, i * 12.0f + environmentOffset }, envSize.x, envSize.y, envSize.z, BROWN);
+                }
+                // Правая сторона с текстурой - еще дальше от дороги
+                if (IsTextureReady(currentLocation.rightEnvironmentTexture)) {
+                    DrawCubeTexture({ 8.0f, 2.0f, i * 12.0f + environmentOffset }, envSize, currentLocation.rightEnvironmentTexture, RAYWHITE);
+                }
+                else {
+                    DrawCube({ 8.0f, 2.0f, i * 12.0f + environmentOffset }, envSize.x, envSize.y, envSize.z, BROWN);
+                }
+            }
+        }
+        break;
+
+        case 3: // Winter - домики (самые далекие от дороги)
+        {
+            Vector3 envSize = { 4.0f, 5.0f, 4.0f };
+            for (int i = -5; i <= 5; i++) {
+                // Левая сторона с текстурой - самые далекие от дороги
+                if (IsTextureReady(currentLocation.leftEnvironmentTexture)) {
+                    DrawCubeTexture({ -8.0f, 2.5f, i * 15.0f + environmentOffset }, envSize, currentLocation.leftEnvironmentTexture, RAYWHITE);
+                }
+                else {
+                    DrawCube({ -8.0f, 2.5f, i * 15.0f + environmentOffset }, envSize.x, envSize.y, envSize.z, WHITE);
+                }
+                // Правая сторона с текстурой - самые далекие от дороги
+                if (IsTextureReady(currentLocation.rightEnvironmentTexture)) {
+                    DrawCubeTexture({ 8.0f, 2.5f, i * 15.0f + environmentOffset }, envSize, currentLocation.rightEnvironmentTexture, RAYWHITE);
+                }
+                else {
+                    DrawCube({ 8.0f, 2.5f, i * 15.0f + environmentOffset }, envSize.x, envSize.y, envSize.z, WHITE);
+                }
+            }
+        }
+        break;
         }
     }
 
@@ -895,7 +1174,8 @@ private:
             if (obstacle.active) {
                 obstacle.position.z += obstacle.speed * GetFrameTime();
 
-                if (obstacle.position.z > 10.0f) {
+                // ИСПРАВЛЕНИЕ: используем новую дальность деактивации
+                if (obstacle.position.z > despawnDistance) {
                     obstacle.active = false;
                 }
             }
@@ -940,7 +1220,8 @@ private:
         // Назначаем текстуру в зависимости от локации и типа препятствия
         obstacle.texture = GetObstacleTexture(obstacle.type);
 
-        obstacle.position = { lanePositions[obstacle.lane], obstacle.size.y / 2, -20.0f };
+        // ИСПРАВЛЕНИЕ: используем новую дальность спавна
+        obstacle.position = { lanePositions[obstacle.lane], obstacle.size.y / 2, spawnDistance };
         obstacle.active = true;
         obstacle.speed = gameSpeed + (static_cast<float>(score) / 1000.0f);
 
@@ -1009,7 +1290,8 @@ private:
             // Назначаем текстуру в зависимости от локации и типа препятствия
             obstacle.texture = GetObstacleTexture(obstacle.type);
 
-            obstacle.position = { lanePositions[obstacle.lane], obstacle.size.y / 2, -20.0f };
+            // ИСПРАВЛЕНИЕ: используем новую дальность спавна
+            obstacle.position = { lanePositions[obstacle.lane], obstacle.size.y / 2, spawnDistance };
             obstacle.active = true;
             obstacle.speed = gameSpeed + (static_cast<float>(score) / 1000.0f);
 
@@ -1046,7 +1328,8 @@ private:
                     }
                 }
 
-                if (coin.position.z > 10.0f) {
+                // ИСПРАВЛЕНИЕ: используем новую дальность деактивации
+                if (coin.position.z > despawnDistance) {
                     coin.active = false;
                 }
             }
@@ -1058,7 +1341,8 @@ private:
 
     void SpawnCoin() {
         Coin coin;
-        coin.position = { lanePositions[GetRandomValue(0, 2)], 1.5f, -20.0f };
+        // ИСПРАВЛЕНИЕ: используем новую дальность спавна
+        coin.position = { lanePositions[GetRandomValue(0, 2)], 1.5f, spawnDistance };
         coin.active = true;
         // Монеты теперь имеют ту же скорость, что и препятствия
         coin.speed = gameSpeed + (static_cast<float>(score) / 1000.0f);
@@ -1082,7 +1366,8 @@ private:
                 powerUp.position.z += powerUp.speed * GetFrameTime();
                 powerUp.rotation += 2.0f * GetFrameTime();
 
-                if (powerUp.position.z > 10.0f) {
+                // ИСПРАВЛЕНИЕ: используем новую дальность деактивации
+                if (powerUp.position.z > despawnDistance) {
                     powerUp.active = false;
                 }
             }
@@ -1094,7 +1379,8 @@ private:
 
     void SpawnPowerUp() {
         PowerUp powerUp;
-        powerUp.position = { lanePositions[GetRandomValue(0, 2)], 1.5f, -20.0f };
+        // ИСПРАВЛЕНИЕ: используем новую дальность спавна
+        powerUp.position = { lanePositions[GetRandomValue(0, 2)], 1.5f, spawnDistance };
         powerUp.active = true;
         // Усиления также имеют увеличивающуюся скорость
         powerUp.speed = gameSpeed + (static_cast<float>(score) / 1000.0f);
@@ -1115,6 +1401,9 @@ private:
             powerUp.type = PowerUpType::DOUBLE_POINTS;
             break;
         }
+
+        // Назначаем текстуру способности (одинаковую на всех локациях)
+        powerUp.texture = GetPowerUpTexture(powerUp.type);
 
         powerUps.push_back(powerUp);
     }
@@ -1296,84 +1585,22 @@ private:
         environmentOffset = 0.0f;
     }
 
-    void DrawPowerUp(Vector3 position, PowerUpType type) {
-        Texture2D texture;
-        Color glowColor = WHITE;
-
-        switch (type) {
-        case PowerUpType::SPEED_BOOST:
-            texture = speedBoostTexture;
-            glowColor = ORANGE;
-            break;
-        case PowerUpType::INVINCIBILITY:
-            texture = invincibilityTexture;
-            glowColor = GOLD;
-            break;
-        case PowerUpType::MAGNET:
-            texture = magnetTexture;
-            glowColor = RED;
-            break;
-        case PowerUpType::DOUBLE_POINTS:
-            texture = doublePointsTexture;
-            glowColor = GREEN;
-            break;
-        }
-
-        float scale = 1.0f + 0.2f * sin(GetTime() * 5.0f);
-        Vector3 scaledSize = { scale, scale, scale };
-
-        DrawCubeTexture(position, scaledSize, texture, RAYWHITE);
-        // УБРАНА ОБВОДКА: DrawSphereWires(position, 0.7f, 8, 8, glowColor);
-    }
-
-    void DrawEnvironment() {
-        Color envColor;
-        Vector3 envSize;
-
-        switch (menu.selectedLocation) {
-        case 0: // City - здания
-            envColor = GRAY;
-            envSize = { 3.0f, 8.0f, 3.0f };
-            for (int i = -5; i <= 5; i++) {
-                DrawCube({ -8.0f, 4.0f, i * 10.0f + environmentOffset }, envSize.x, envSize.y, envSize.z, envColor);
-                DrawCube({ 8.0f, 4.0f, i * 10.0f + environmentOffset }, envSize.x, envSize.y, envSize.z, envColor);
-            }
-            break;
-        case 1: // Forest - деревья
-            envColor = GREEN;
-            envSize = { 2.0f, 6.0f, 2.0f };
-            for (int i = -5; i <= 5; i++) {
-                DrawCube({ -6.0f, 3.0f, i * 8.0f + environmentOffset }, envSize.x, envSize.y, envSize.z, envColor);
-                DrawCube({ 6.0f, 3.0f, i * 8.0f + environmentOffset }, envSize.x, envSize.y, envSize.z, envColor);
-            }
-            break;
-        case 2: // Desert - камни
-            envColor = BROWN;
-            envSize = { 4.0f, 4.0f, 4.0f };
-            for (int i = -5; i <= 5; i++) {
-                DrawCube({ -7.0f, 2.0f, i * 12.0f + environmentOffset }, envSize.x, envSize.y, envSize.z, envColor);
-                DrawCube({ 7.0f, 2.0f, i * 12.0f + environmentOffset }, envSize.x, envSize.y, envSize.z, envColor);
-            }
-            break;
-        case 3: // Winter - домики
-            envColor = WHITE;
-            envSize = { 4.0f, 5.0f, 4.0f };
-            for (int i = -5; i <= 5; i++) {
-                DrawCube({ -7.0f, 2.5f, i * 15.0f + environmentOffset }, envSize.x, envSize.y, envSize.z, envColor);
-                DrawCube({ 7.0f, 2.5f, i * 15.0f + environmentOffset }, envSize.x, envSize.y, envSize.z, envColor);
-            }
-            break;
-        }
-    }
-
     void Draw3DWorld() {
         DrawPlane({ 0.0f, 0.0f, 0.0f }, { 50.0f, 100.0f }, GetCurrentGroundColor());
-        DrawEnvironment();
 
+        // НОВОЕ: рисуем три отдельные полосы с разными цветами
         for (int i = 0; i < 3; i++) {
-            Color laneColor = (i == 1) ? GRAY : DARKGRAY;
+            Color laneColor;
+            switch (i) {
+            case 0: laneColor = GetLeftLaneColor(); break;
+            case 1: laneColor = GetMiddleLaneColor(); break;
+            case 2: laneColor = GetRightLaneColor(); break;
+            }
             DrawCube({ lanePositions[i], 0.01f, 0.0f }, laneWidth, 0.02f, 100.0f, laneColor);
         }
+
+        // Рисуем окружение с учетом локации
+        DrawEnvironment();
 
         // Рисуем препятствия с текстурами
         for (auto& obstacle : obstacles) {
@@ -1386,17 +1613,15 @@ private:
             }
         }
 
+        // Рисуем способности с текстурами
         for (auto& powerUp : powerUps) {
-            if (powerUp.active) {
-                DrawPowerUp(powerUp.position, powerUp.type);
-            }
+            DrawPowerUp(powerUp);
         }
 
         DrawPlayer();
 
         if (HasPowerUp(PowerUpType::MAGNET)) {
             float magnetRadius = 2.0f + (shop.upgrades[2].level * 0.3f);
-            // УБРАНА ОБВОДКА: DrawSphereWires(player.position, magnetRadius, 8, 8, BLUE);
         }
     }
 
@@ -1404,7 +1629,7 @@ private:
         Texture2D characterTexture = GetCharacterTexture();
 
         // Всегда рисуем персонажа с текстурой
-        if (characterTexture.id != 0) {
+        if (IsTextureReady(characterTexture)) {
             DrawCubeTexture(player.position, player.size, characterTexture, RAYWHITE);
         }
         else {
@@ -1415,10 +1640,9 @@ private:
                 playerColor = GOLD;
             }
 
-            DrawCubeTexture(player.position, player.size, CreateDefaultCharacterTexture(), playerColor);
+            DrawCube(player.position, player.size.x, player.size.y, player.size.z, playerColor);
+            DrawCubeWires(player.position, player.size.x, player.size.y, player.size.z, BLACK);
         }
-
-        // УБРАНА ОБВОДКА: DrawCubeWires(player.position, player.size.x, player.size.y, player.size.z, BLACK);
     }
 
     void DrawShop() {
