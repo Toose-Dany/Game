@@ -228,8 +228,8 @@ private:
     bool texturesLoaded;
 
     // Константа для дальности спавна
-    const float spawnDistance = -40.0f;
-    const float despawnDistance = 20.0f;
+    const float spawnDistance = -30.0f;
+    const float despawnDistance = 15.0f;
 
 public:
     Game() {
