@@ -228,8 +228,8 @@ private:
     bool texturesLoaded;
 
     // Константа для дальности спавна
-    const float spawnDistance = -40.0f;
-    const float despawnDistance = 20.0f;
+    const float spawnDistance = -30.0f;
+    const float despawnDistance = 15.0f;
 
 public:
     Game() {
@@ -1312,7 +1312,6 @@ private:
             if (coin.active) {
                 // Монеты теперь движутся с той же скоростью, что и препятствия
                 coin.speed = gameSpeed + (static_cast<float>(score) / 1000.0f);
-                coin.position.z += coin.speed * GetFrameTime();
 
                 // Эффект магнита: монеты притягиваются к игроку
                 if (HasPowerUp(PowerUpType::MAGNET)) {
@@ -1322,10 +1321,31 @@ private:
                     float distance = sqrt(dx * dx + dz * dz);
 
                     if (distance < magnetRange && distance > 0.5f) {
-                        float pullStrength = 10.0f;
-                        coin.position.x += (dx / distance) * pullStrength * GetFrameTime();
-                        coin.position.z += (dz / distance) * pullStrength * GetFrameTime();
+                        // УВЕЛИЧИВАЕМ СИЛУ ПРИТЯЖЕНИЯ ПРОПОРЦИОНАЛЬНО СКОРОСТИ
+                        float pullStrength = 15.0f + (coin.speed * 0.5f); // Сила зависит от скорости
+
+                        // УВЕЛИЧИВАЕМ ДАЛЬНОСТЬ ДЕЙСТВИЯ МАГНИТА
+                        float effectiveRange = magnetRange * (1.0f + coin.speed * 0.1f);
+
+                        if (distance < effectiveRange) {
+                            // ПЛАВНОЕ ПРИТЯЖЕНИЕ С УЧЕТОМ СКОРОСТИ
+                            float attraction = pullStrength * GetFrameTime() * (1.0f - distance / effectiveRange);
+                            coin.position.x += (dx / distance) * attraction;
+                            coin.position.z += (dz / distance) * attraction;
+
+                            // ДОПОЛНИТЕЛЬНОЕ УСКОРЕНИЕ К ИГРОКУ ПРИ БЛИЗКОМ РАССТОЯНИИ
+                            if (distance < 3.0f) {
+                                coin.position.z += coin.speed * 0.3f * GetFrameTime(); // Ускоряем к игроку
+                            }
+                        }
                     }
+                }
+
+                // ОБЫЧНОЕ ДВИЖЕНИЕ МОНЕТ (только если не активно сильное притяжение)
+                if (!HasPowerUp(PowerUpType::MAGNET) ||
+                    (HasPowerUp(PowerUpType::MAGNET) &&
+                        Vector3Distance(coin.position, player.position) > 8.0f)) {
+                    coin.position.z += coin.speed * GetFrameTime();
                 }
 
                 // ИСПРАВЛЕНИЕ: используем новую дальность деактивации
@@ -1421,6 +1441,8 @@ private:
             break;
         case PowerUpType::MAGNET:
             upgradeBonus = shop.upgrades[2].value;
+            // УВЕЛИЧИВАЕМ БАЗОВУЮ ДЛИТЕЛЬНОСТЬ ДЛЯ МАГНИТА
+            baseDuration = 7.0f;
             break;
         case PowerUpType::DOUBLE_POINTS:
             upgradeBonus = shop.upgrades[3].value;
@@ -1429,10 +1451,24 @@ private:
 
         float totalDuration = baseDuration + upgradeBonus;
 
-        for (auto& activePowerUp : player.activePowerUps) {
-            if (activePowerUp.type == type) {
-                activePowerUp.timer = totalDuration;
-                return;
+        // ОСОБЫЙ СЛУЧАЙ ДЛЯ МАГНИТА - СБРАСЫВАЕМ ТАЙМЕР ПРИ ПОВТОРНОМ ПОДБОРЕ
+        if (type == PowerUpType::MAGNET) {
+            for (auto it = player.activePowerUps.begin(); it != player.activePowerUps.end(); ) {
+                if (it->type == PowerUpType::MAGNET) {
+                    it = player.activePowerUps.erase(it);
+                }
+                else {
+                    ++it;
+                }
+            }
+        }
+        else {
+            // Для остальных усилений ищем существующее
+            for (auto& activePowerUp : player.activePowerUps) {
+                if (activePowerUp.type == type) {
+                    activePowerUp.timer = totalDuration;
+                    return;
+                }
             }
         }
 
