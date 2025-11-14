@@ -1307,10 +1307,10 @@ private:
             coinSpawnTimer = 0;
         }
 
-        // Обновление позиций монет с УВЕЛИЧЕННОЙ СКОРОСТЬЮ
+        // Обновление позиций монет
         for (auto& coin : coins) {
             if (coin.active) {
-                // Монеты теперь движутся с той же скоростью, что и препятствия
+                // Монеты движутся с той же скоростью, что и препятствия
                 coin.speed = gameSpeed + (static_cast<float>(score) / 1000.0f);
 
                 // Эффект магнита: монеты притягиваются к игроку
@@ -1321,34 +1321,33 @@ private:
                     float distance = sqrt(dx * dx + dz * dz);
 
                     if (distance < magnetRange && distance > 0.5f) {
-                        // УВЕЛИЧИВАЕМ СИЛУ ПРИТЯЖЕНИЯ ПРОПОРЦИОНАЛЬНО СКОРОСТИ
-                        float pullStrength = 15.0f + (coin.speed * 0.5f); // Сила зависит от скорости
+                        // СИЛА ПРИТЯЖЕНИЯ ЗАВИСИТ ОТ СКОРОСТИ И РАССТОЯНИЯ
+                        float pullStrength = 20.0f + (coin.speed * 0.8f);
 
-                        // УВЕЛИЧИВАЕМ ДАЛЬНОСТЬ ДЕЙСТВИЯ МАГНИТА
-                        float effectiveRange = magnetRange * (1.0f + coin.speed * 0.1f);
+                        // ПЛАВНОЕ ПРИТЯЖЕНИЕ
+                        float attraction = pullStrength * GetFrameTime() * (1.0f - distance / magnetRange);
+                        coin.position.x += (dx / distance) * attraction;
 
-                        if (distance < effectiveRange) {
-                            // ПЛАВНОЕ ПРИТЯЖЕНИЕ С УЧЕТОМ СКОРОСТИ
-                            float attraction = pullStrength * GetFrameTime() * (1.0f - distance / effectiveRange);
-                            coin.position.x += (dx / distance) * attraction;
-                            coin.position.z += (dz / distance) * attraction;
+                        // ОСНОВНОЕ ДВИЖЕНИЕ ВПЕРЕД + ДОПОЛНИТЕЛЬНОЕ УСКОРЕНИЕ К ИГРОКУ
+                        coin.position.z += coin.speed * GetFrameTime();
+                        coin.position.z += (dz / distance) * attraction * 2.0f; // Более сильное притяжение по Z
 
-                            // ДОПОЛНИТЕЛЬНОЕ УСКОРЕНИЕ К ИГРОКУ ПРИ БЛИЗКОМ РАССТОЯНИИ
-                            if (distance < 3.0f) {
-                                coin.position.z += coin.speed * 0.3f * GetFrameTime(); // Ускоряем к игроку
-                            }
+                        // ДОПОЛНИТЕЛЬНОЕ УСКОРЕНИЕ ПРИ БЛИЗКОМ РАССТОЯНИИ
+                        if (distance < 2.0f) {
+                            coin.position.z += coin.speed * 0.5f * GetFrameTime();
                         }
                     }
+                    else {
+                        // ОБЫЧНОЕ ДВИЖЕНИЕ ЕСЛИ МОНЕТА ВНЕ ДИАПАЗОНА МАГНИТА
+                        coin.position.z += coin.speed * GetFrameTime();
+                    }
                 }
-
-                // ОБЫЧНОЕ ДВИЖЕНИЕ МОНЕТ (только если не активно сильное притяжение)
-                if (!HasPowerUp(PowerUpType::MAGNET) ||
-                    (HasPowerUp(PowerUpType::MAGNET) &&
-                        Vector3Distance(coin.position, player.position) > 8.0f)) {
+                else {
+                    // ОБЫЧНОЕ ДВИЖЕНИЕ БЕЗ МАГНИТА
                     coin.position.z += coin.speed * GetFrameTime();
                 }
 
-                // ИСПРАВЛЕНИЕ: используем новую дальность деактивации
+                // Деактивация монет
                 if (coin.position.z > despawnDistance) {
                     coin.active = false;
                 }
@@ -1442,7 +1441,7 @@ private:
         case PowerUpType::MAGNET:
             upgradeBonus = shop.upgrades[2].value;
             // УВЕЛИЧИВАЕМ БАЗОВУЮ ДЛИТЕЛЬНОСТЬ ДЛЯ МАГНИТА
-            baseDuration = 7.0f;
+            baseDuration = 8.0f; // Еще больше увеличили длительность
             break;
         case PowerUpType::DOUBLE_POINTS:
             upgradeBonus = shop.upgrades[3].value;
