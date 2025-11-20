@@ -21,6 +21,69 @@ enum class PowerUpType {
     DOUBLE_POINTS     // Двойные очки
 };
 
+// Структура для анимированной текстуры
+struct AnimatedTexture {
+    std::vector<Texture2D> frames;
+    float frameDelay;
+    float currentTime;
+    int currentFrame;
+    float scale;
+    bool loaded;
+    
+    // Конструктор по умолчанию
+    AnimatedTexture() : frameDelay(0.1f), currentTime(0.0f), currentFrame(0), scale(1.0f), loaded(false) {}
+};
+
+// Функция для загрузки анимированной текстуры из нескольких изображений
+bool LoadAnimatedTexture(AnimatedTexture& animTex, const std::vector<std::string>& frameFiles, float frameDelay) {
+    animTex.frames.clear();
+    
+    for (const auto& filepath : frameFiles) {
+        if (FileExists(filepath.c_str())) {
+            Image image = LoadImage(filepath.c_str());
+            if (image.data != NULL) {
+                Texture2D frameTexture = LoadTextureFromImage(image);
+                animTex.frames.push_back(frameTexture);
+                UnloadImage(image);
+                TraceLog(LOG_INFO, "Loaded animation frame: %s", filepath.c_str());
+            }
+        }
+        else {
+            TraceLog(LOG_WARNING, "Animation frame not found: %s", filepath.c_str());
+        }
+    }
+    
+    if (!animTex.frames.empty()) {
+        animTex.frameDelay = frameDelay;
+        animTex.currentTime = 0.0f;
+        animTex.currentFrame = 0;
+        animTex.scale = 0.7f;
+        animTex.loaded = true;
+        TraceLog(LOG_INFO, "Animation loaded: %d frames", (int)animTex.frames.size());
+        return true;
+    }
+    
+    animTex.loaded = false;
+    return false;
+}
+
+// Функция для обновления анимации
+void UpdateAnimatedTexture(AnimatedTexture& animTex, float deltaTime) {
+    if (!animTex.loaded || animTex.frames.empty()) return;
+    
+    animTex.currentTime += deltaTime;
+    if (animTex.currentTime >= animTex.frameDelay) {
+        animTex.currentTime = 0.0f;
+        animTex.currentFrame = (animTex.currentFrame + 1) % animTex.frames.size();
+    }
+}
+
+// Функция для получения текущего кадра
+Texture2D GetCurrentFrame(const AnimatedTexture& animTex) {
+    if (!animTex.loaded || animTex.frames.empty()) return {0};
+    return animTex.frames[animTex.currentFrame];
+}
+
 // Структура для улучшений
 struct Upgrade {
     std::string name;
@@ -113,6 +176,11 @@ struct Character {
     std::string name;
     Texture2D texture;
     Color defaultColor;
+    bool useAnimatedTexture;          // Флаг использования анимированной текстуры
+    
+    // Конструктор для удобной инициализации
+    Character(const std::string& n, Color color) 
+        : name(n), texture({0}), defaultColor(color), useAnimatedTexture(false) {}
 };
 
 // Структура для меню
@@ -155,12 +223,12 @@ struct Menu {
              {0}, {0}, {0}, {0}, {0}, {0}}
         };
 
-        // Инициализация персонажей с текстурами
+        // Инициализация персонажей с поддержкой анимированных текстур
         characters = {
-            {"Default", {0}, RED},
-            {"Ninja", {0}, BLACK},
-            {"Robot", {0}, BLUE},
-            {"Girl", {0}, PINK}
+            Character("Default", RED),
+            Character("Ninja", BLACK),
+            Character("Robot", BLUE),
+            Character("Girl", PINK)
         };
     }
 };
@@ -231,9 +299,12 @@ private:
     const float spawnDistance = -30.0f;
     const float despawnDistance = 15.0f;
 
+    // Анимированные текстуры для персонажей
+    std::vector<AnimatedTexture> characterAnimations;
+
 public:
     Game() {
-        InitWindow(screenWidth, screenHeight, "Runner 3D with Character Textures");
+        InitWindow(screenWidth, screenHeight, "Runner 3D with Character Animations");
 
         // Настройка дорожек
         laneWidth = 4.0f;
@@ -285,8 +356,14 @@ public:
         texturesLoaded = false;
         environmentOffset = 0.0f;
 
+        // Инициализация анимированных текстур
+        characterAnimations.resize(menu.characters.size());
+
         // Загружаем текстуры
         LoadTextures();
+        
+        // Загружаем анимированные текстуры для персонажей
+        LoadCharacterAnimations();
 
         SetTargetFPS(60);
     }
@@ -297,6 +374,9 @@ public:
 
         // Выгружаем текстуры персонажей
         UnloadCharacterTextures();
+
+        // Выгружаем анимированные текстуры
+        UnloadCharacterAnimations();
 
         // Выгружаем текстуры способностей
         UnloadTexture(speedBoostTexture);
@@ -315,6 +395,115 @@ public:
     }
 
 private:
+    void LoadCharacterAnimations() {
+        // Создаем списки файлов для анимаций каждого персонажа
+        std::vector<std::vector<std::string>> characterFrameFiles = {
+            // Default character frames
+            {
+                "default_frame1.png",
+                "default_frame2.png", 
+                "default_frame3.png",
+                "default_frame4.png"
+            },
+            // Ninja character frames
+            {
+                "ninja_frame1.png",
+                "ninja_frame2.png",
+                "ninja_frame3.png", 
+                "ninja_frame4.png"
+            },
+            // Robot character frames
+            {
+                "robot_frame1.png",
+                "robot_frame2.png",
+                "robot_frame3.png",
+                "robot_frame4.png"
+            },
+            // Girl character frames  
+            {
+                "girl_frame1.png",
+                "girl_frame2.png",
+                "girl_frame3.png",
+                "girl_frame4.png"
+            }
+        };
+        
+        for (int i = 0; i < (int)menu.characters.size(); i++) {
+            if (LoadAnimatedTexture(characterAnimations[i], characterFrameFiles[i], 0.1f)) {
+                menu.characters[i].useAnimatedTexture = true;
+                TraceLog(LOG_INFO, "Animated texture loaded for character: %s", menu.characters[i].name.c_str());
+            } else {
+                menu.characters[i].useAnimatedTexture = false;
+                TraceLog(LOG_WARNING, "Failed to load animated texture for character: %s", menu.characters[i].name.c_str());
+                
+                // Создаем простую анимацию из цветов как fallback
+                CreateFallbackAnimation(characterAnimations[i], menu.characters[i].defaultColor);
+            }
+        }
+    }
+
+    void CreateFallbackAnimation(AnimatedTexture& animTex, Color baseColor) {
+        animTex.frames.clear();
+        
+        // Создаем 4 кадра с пульсирующим эффектом
+        for (int i = 0; i < 4; i++) {
+            Image image = GenImageColor(64, 64, BLANK);
+            
+            float pulse = 0.7f + 0.3f * sin(i * PI / 2); // Пульсация между кадрами
+            Color characterColor = ColorBrightness(baseColor, pulse);
+            
+            // Рисуем простого персонажа
+            for (int y = 0; y < 64; y++) {
+                for (int x = 0; x < 64; x++) {
+                    Color color = characterColor;
+                    
+                    // Тело
+                    if (x > 15 && x < 49 && y > 15 && y < 49) {
+                        color = ColorBrightness(characterColor, 0.8f);
+                    }
+                    
+                    // Глазы (анимированные - двигаются)
+                    int eyeOffset = i;
+                    if ((x >= 20 + eyeOffset && x <= 25 + eyeOffset && y >= 20 && y <= 25) ||
+                        (x >= 35 - eyeOffset && x <= 40 - eyeOffset && y >= 20 && y <= 25)) {
+                        color = BLACK;
+                    }
+                    
+                    // Рот (анимированный - меняет выражение)
+                    int mouthY = 35 + (i % 2);
+                    if (x >= 25 && x <= 39 && y >= mouthY && y <= mouthY + 2) {
+                        color = BLACK;
+                    }
+                    
+                    ImageDrawPixel(&image, x, y, color);
+                }
+            }
+            
+            Texture2D frame = LoadTextureFromImage(image);
+            animTex.frames.push_back(frame);
+            UnloadImage(image);
+        }
+        
+        animTex.frameDelay = 0.15f;
+        animTex.currentTime = 0.0f;
+        animTex.currentFrame = 0;
+        animTex.scale = 0.7f;
+        animTex.loaded = true;
+    }
+
+    void UnloadCharacterAnimations() {
+        for (auto& animTex : characterAnimations) {
+            for (auto& frame : animTex.frames) {
+                if (IsTextureReady(frame)) {
+                    UnloadTexture(frame);
+                }
+            }
+            animTex.frames.clear();
+            animTex.loaded = false;
+        }
+        characterAnimations.clear();
+    }
+
     void UnloadLocationTextures() {
         for (auto& location : menu.locations) {
             if (IsTextureReady(location.jumpTexture)) UnloadTexture(location.jumpTexture);
@@ -426,7 +615,7 @@ private:
     }
 
     void LoadCharacterTextures() {
-        // Загружаем текстуры для каждого персонажа
+        // Загружаем текстуры для каждого персонажа (как fallback)
         LoadCharacterTexture("default_character.png", menu.characters[0].texture);
         LoadCharacterTexture("ninja_character.png", menu.characters[1].texture);
         LoadCharacterTexture("robot_character.png", menu.characters[2].texture);
@@ -938,6 +1127,12 @@ private:
             return;
         }
 
+        // ОБНОВЛЯЕМ АНИМАЦИИ ПЕРСОНАЖЕЙ
+        float deltaTime = GetFrameTime();
+        for (auto& animTex : characterAnimations) {
+            UpdateAnimatedTexture(animTex, deltaTime);
+        }
+
         HandleInput();
         UpdatePlayer();
         UpdateObstacles();
@@ -947,11 +1142,9 @@ private:
         CheckCollisions();
         UpdatePowerUpEffects();
 
-        // Обновляем параллакс-эффект
         environmentOffset += gameSpeed * 0.3f * GetFrameTime();
         if (environmentOffset > 50.0f) environmentOffset = 0.0f;
 
-        // Увеличиваем счет
         score += HasPowerUp(PowerUpType::DOUBLE_POINTS) ? 2 : 1;
     }
 
@@ -1307,12 +1500,11 @@ private:
             coinSpawnTimer = 0;
         }
 
-        // Обновление позиций монет с УВЕЛИЧЕННОЙ СКОРОСТЬЮ
+        // Обновление позиций монет
         for (auto& coin : coins) {
             if (coin.active) {
-                // Монеты теперь движутся с той же скоростью, что и препятствия
+                // Монеты движутся с той же скоростью, что и препятствия
                 coin.speed = gameSpeed + (static_cast<float>(score) / 1000.0f);
-                coin.position.z += coin.speed * GetFrameTime();
 
                 // Эффект магнита: монеты притягиваются к игроку
                 if (HasPowerUp(PowerUpType::MAGNET)) {
@@ -1322,13 +1514,33 @@ private:
                     float distance = sqrt(dx * dx + dz * dz);
 
                     if (distance < magnetRange && distance > 0.5f) {
-                        float pullStrength = 10.0f;
-                        coin.position.x += (dx / distance) * pullStrength * GetFrameTime();
-                        coin.position.z += (dz / distance) * pullStrength * GetFrameTime();
+                        // СИЛА ПРИТЯЖЕНИЯ ЗАВИСИТ ОТ СКОРОСТИ И РАССТОЯНИЯ
+                        float pullStrength = 20.0f + (coin.speed * 0.8f);
+
+                        // ПЛАВНОЕ ПРИТЯЖЕНИЕ
+                        float attraction = pullStrength * GetFrameTime() * (1.0f - distance / magnetRange);
+                        coin.position.x += (dx / distance) * attraction;
+
+                        // ОСНОВНОЕ ДВИЖЕНИЕ ВПЕРЕД + ДОПОЛНИТЕЛЬНОЕ УСКОРЕНИЕ К ИГРОКУ
+                        coin.position.z += coin.speed * GetFrameTime();
+                        coin.position.z += (dz / distance) * attraction * 2.0f; // Более сильное притяжение по Z
+
+                        // ДОПОЛНИТЕЛЬНОЕ УСКОРЕНИЕ ПРИ БЛИЗКОМ РАССТОЯНИИ
+                        if (distance < 2.0f) {
+                            coin.position.z += coin.speed * 0.5f * GetFrameTime();
+                        }
+                    }
+                    else {
+                        // ОБЫЧНОЕ ДВИЖЕНИЕ ЕСЛИ МОНЕТА ВНЕ ДИАПАЗОНА МАГНИТА
+                        coin.position.z += coin.speed * GetFrameTime();
                     }
                 }
+                else {
+                    // ОБЫЧНОЕ ДВИЖЕНИЕ БЕЗ МАГНИТА
+                    coin.position.z += coin.speed * GetFrameTime();
+                }
 
-                // ИСПРАВЛЕНИЕ: используем новую дальность деактивации
+                // Деактивация монет
                 if (coin.position.z > despawnDistance) {
                     coin.active = false;
                 }
@@ -1421,6 +1633,8 @@ private:
             break;
         case PowerUpType::MAGNET:
             upgradeBonus = shop.upgrades[2].value;
+            // УВЕЛИЧИВАЕМ БАЗОВУЮ ДЛИТЕЛЬНОСТЬ ДЛЯ МАГНИТА
+            baseDuration = 8.0f; // Еще больше увеличили длительность
             break;
         case PowerUpType::DOUBLE_POINTS:
             upgradeBonus = shop.upgrades[3].value;
@@ -1429,10 +1643,24 @@ private:
 
         float totalDuration = baseDuration + upgradeBonus;
 
-        for (auto& activePowerUp : player.activePowerUps) {
-            if (activePowerUp.type == type) {
-                activePowerUp.timer = totalDuration;
-                return;
+        // ОСОБЫЙ СЛУЧАЙ ДЛЯ МАГНИТА - СБРАСЫВАЕМ ТАЙМЕР ПРИ ПОВТОРНОМ ПОДБОРЕ
+        if (type == PowerUpType::MAGNET) {
+            for (auto it = player.activePowerUps.begin(); it != player.activePowerUps.end(); ) {
+                if (it->type == PowerUpType::MAGNET) {
+                    it = player.activePowerUps.erase(it);
+                }
+                else {
+                    ++it;
+                }
+            }
+        }
+        else {
+            // Для остальных усилений ищем существующее
+            for (auto& activePowerUp : player.activePowerUps) {
+                if (activePowerUp.type == type) {
+                    activePowerUp.timer = totalDuration;
+                    return;
+                }
             }
         }
 
@@ -1626,22 +1854,36 @@ private:
     }
 
     void DrawPlayer() {
-        Texture2D characterTexture = GetCharacterTexture();
-
-        // Всегда рисуем персонажа с текстурой
-        if (IsTextureReady(characterTexture)) {
-            DrawCubeTexture(player.position, player.size, characterTexture, RAYWHITE);
+        // Если для текущего персонажа доступна анимированная текстура и она загружена
+        if (menu.characters[player.characterType].useAnimatedTexture && 
+            characterAnimations[player.characterType].loaded) {
+            
+            AnimatedTexture& animTex = characterAnimations[player.characterType];
+            Vector3 scaledSize = {
+                player.size.x * animTex.scale,
+                player.size.y * animTex.scale,
+                player.size.z * animTex.scale
+            };
+            
+            // Используем текущий кадр анимации
+            Texture2D currentFrame = GetCurrentFrame(animTex);
+            DrawCubeTexture(player.position, scaledSize, currentFrame, WHITE);
         }
         else {
-            // Если текстура не загрузилась, рисуем цветным кубом
-            Color playerColor = menu.characters[player.characterType].defaultColor;
-
-            if (HasPowerUp(PowerUpType::INVINCIBILITY) && ((int)(GetTime() * 10) % 2 == 0)) {
-                playerColor = GOLD;
+            // Fallback: используем статичную текстуру или цветной куб
+            Texture2D characterTexture = GetCharacterTexture();
+            
+            if (IsTextureReady(characterTexture)) {
+                DrawCubeTexture(player.position, player.size, characterTexture, RAYWHITE);
             }
-
-            DrawCube(player.position, player.size.x, player.size.y, player.size.z, playerColor);
-            DrawCubeWires(player.position, player.size.x, player.size.y, player.size.z, BLACK);
+            else {
+                Color playerColor = menu.characters[player.characterType].defaultColor;
+                if (HasPowerUp(PowerUpType::INVINCIBILITY) && ((int)(GetTime() * 10) % 2 == 0)) {
+                    playerColor = GOLD;
+                }
+                DrawCube(player.position, player.size.x, player.size.y, player.size.z, playerColor);
+                DrawCubeWires(player.position, player.size.x, player.size.y, player.size.z, BLACK);
+            }
         }
     }
 
@@ -1791,7 +2033,7 @@ private:
     void DrawMenu() {
         ClearBackground(DARKBLUE);
 
-        DrawText("RUNNER 3D WITH CHARACTER TEXTURES", screenWidth / 2 - MeasureText("RUNNER 3D WITH CHARACTER TEXTURES", 40) / 2, 50, 40, YELLOW);
+        DrawText("RUNNER 3D WITH CHARACTER ANIMATIONS", screenWidth / 2 - MeasureText("RUNNER 3D WITH CHARACTER ANIMATIONS", 40) / 2, 50, 40, YELLOW);
         DrawText(TextFormat("Total Coins: %d", shop.totalCoins), screenWidth / 2 - MeasureText(TextFormat("Total Coins: %d", shop.totalCoins), 30) / 2, 100, 30, GOLD);
 
         DrawText("SELECT LOCATION:", screenWidth / 2 - MeasureText("SELECT LOCATION:", 30) / 2, 150, 30, WHITE);
