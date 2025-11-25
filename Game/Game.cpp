@@ -276,12 +276,17 @@ private:
     int score;
     int coinsCollected;
     bool gameOver;
+    bool continueAvailable; // НОВОЕ: доступно ли продолжение
+    int continueCost;       // НОВОЕ: стоимость продолжения
+    int continueUses;       // НОВОЕ: количество использований продолжения
+    const int maxContinues = 3; // НОВОЕ: максимальное количество продолжений
 
     float laneWidth;
     float lanePositions[3];
 
     Camera3D camera;
     float gameSpeed;
+    float initialGameSpeed; // НОВОЕ: начальная скорость игры
 
     Menu menu;
     Shop shop;
@@ -349,8 +354,12 @@ public:
         score = 0;
         coinsCollected = 0;
         gameOver = false;
+        continueAvailable = true; // НОВОЕ: продолжение доступно
+        continueCost = 10;       // НОВОЕ: начальная стоимость продолжения
+        continueUses = 0;        // НОВОЕ: количество использований
 
         gameSpeed = 5.0f;
+        initialGameSpeed = gameSpeed; // НОВОЕ: сохраняем начальную скорость
 
         // Настройки по умолчанию
         texturesLoaded = false;
@@ -1114,9 +1123,7 @@ private:
         }
 
         if (gameOver) {
-            if (IsKeyPressed(KEY_R)) {
-                ResetGame();
-            }
+            // УДАЛЕНО: обработка клавиши R для рестарта
             if (IsKeyPressed(KEY_M)) {
                 menu.isActive = true;
             }
@@ -1124,6 +1131,14 @@ private:
                 // Переход в магазин после игры
                 shop.totalCoins += coinsCollected;
                 shop.isActive = true;
+            }
+            // НОВОЕ: Обработка продолжения за монетки - теперь это основной способ продолжения
+            if (IsKeyPressed(KEY_C) && continueAvailable && shop.totalCoins >= continueCost) {
+                ContinueGame();
+            }
+            // НОВОЕ: Добавлена клавиша R для полного рестарта (только если нет продолжений)
+            if (IsKeyPressed(KEY_R) && !continueAvailable) {
+                ResetGame();
             }
             return;
         }
@@ -1147,6 +1162,62 @@ private:
         if (environmentOffset > 50.0f) environmentOffset = 0.0f;
 
         score += HasPowerUp(PowerUpType::DOUBLE_POINTS) ? 2 : 1;
+    }
+
+    // НОВАЯ ФУНКЦИЯ: Продолжение игры за монетки - теперь это основной способ
+    void ContinueGame() {
+        if (continueAvailable && shop.totalCoins >= continueCost) {
+            // Списываем монетки
+            shop.totalCoins -= continueCost;
+
+            // Увеличиваем количество использований
+            continueUses++;
+
+            // Проверяем, достигли ли максимального количества продолжений
+            if (continueUses >= maxContinues) {
+                continueAvailable = false;
+            }
+            else {
+                // Увеличиваем стоимость следующего продолжения
+                continueCost = static_cast<int>(continueCost * 1.5f);
+            }
+
+            // Восстанавливаем игру
+            gameOver = false;
+
+            // Очищаем препятствия перед игроком
+            ClearObstaclesInFront();
+
+            // Даем кратковременную неуязвимость
+            ApplyPowerUp(PowerUpType::INVINCIBILITY);
+
+            // Увеличиваем скорость для компенсации
+            gameSpeed += 1.0f;
+
+            TraceLog(LOG_INFO, "Game continued for %d coins (use %d/%d)", continueCost, continueUses, maxContinues);
+        }
+    }
+
+    // НОВАЯ ФУНКЦИЯ: Очистка препятствий перед игроком
+    void ClearObstaclesInFront() {
+        for (auto& obstacle : obstacles) {
+            if (obstacle.position.z > player.position.z - 5.0f && obstacle.position.z < player.position.z + 10.0f) {
+                obstacle.active = false;
+            }
+        }
+
+        // Также очищаем монеты и усиления для перебалансировки
+        for (auto& coin : coins) {
+            if (coin.position.z > player.position.z - 5.0f && coin.position.z < player.position.z + 10.0f) {
+                coin.active = false;
+            }
+        }
+
+        for (auto& powerUp : powerUps) {
+            if (powerUp.position.z > player.position.z - 5.0f && powerUp.position.z < player.position.z + 10.0f) {
+                powerUp.active = false;
+            }
+        }
     }
 
     void UpdateMenu() {
@@ -1176,6 +1247,10 @@ private:
         if (IsKeyPressed(KEY_ENTER)) {
             player.characterType = menu.selectedCharacter;
             menu.isActive = false;
+            // НОВОЕ: Сбрасываем продолжения при старте новой игры из меню
+            continueUses = 0;
+            continueAvailable = true;
+            continueCost = 50;
         }
 
         if (oldLocation != menu.selectedLocation) {
@@ -1811,6 +1886,10 @@ private:
         score = 0;
         coinsCollected = 0;
         gameOver = false;
+        continueAvailable = true; // НОВОЕ: сбрасываем возможность продолжения
+        continueCost = 50;       // НОВОЕ: сбрасываем стоимость продолжения
+        continueUses = 0;        // НОВОЕ: сбрасываем количество использований
+        gameSpeed = initialGameSpeed; // НОВОЕ: сбрасываем скорость игры
         environmentOffset = 0.0f;
     }
 
@@ -1950,12 +2029,43 @@ private:
         }
         else if (gameOver) {
             DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.5f));
-            DrawText("GAME OVER", screenWidth / 2 - MeasureText("GAME OVER", 40) / 2, screenHeight / 2 - 80, 40, RED);
-            DrawText(TextFormat("Final Score: %d", score), screenWidth / 2 - MeasureText(TextFormat("Final Score: %d", score), 20) / 2, screenHeight / 2 - 30, 20, WHITE);
-            DrawText(TextFormat("Coins Collected: %d", coinsCollected), screenWidth / 2 - MeasureText(TextFormat("Coins Collected: %d", coinsCollected), 20) / 2, screenHeight / 2, 20, GOLD);
-            DrawText("Press R to restart", screenWidth / 2 - MeasureText("Press R to restart", 20) / 2, screenHeight / 2 + 30, 20, WHITE);
-            DrawText("Press M for menu", screenWidth / 2 - MeasureText("Press M for menu", 20) / 2, screenHeight / 2 + 60, 20, WHITE);
-            DrawText("Press S for shop", screenWidth / 2 - MeasureText("Press S for shop", 20) / 2, screenHeight / 2 + 90, 20, GREEN);
+            DrawText("GAME OVER", screenWidth / 2 - MeasureText("GAME OVER", 40) / 2, screenHeight / 2 - 120, 40, RED);
+            DrawText(TextFormat("Final Score: %d", score), screenWidth / 2 - MeasureText(TextFormat("Final Score: %d", score), 20) / 2, screenHeight / 2 - 70, 20, WHITE);
+            DrawText(TextFormat("Coins Collected: %d", coinsCollected), screenWidth / 2 - MeasureText(TextFormat("Coins Collected: %d", coinsCollected), 20) / 2, screenHeight / 2 - 40, 20, GOLD);
+
+            // НОВОЕ: Отображение опции продолжения как основного способа
+            if (continueAvailable) {
+                Color continueColor = (shop.totalCoins >= continueCost) ? GREEN : RED;
+                DrawText(TextFormat("Press C to Continue - %d coins", continueCost),
+                    screenWidth / 2 - MeasureText(TextFormat("Press C to Continue - %d coins", continueCost), 25) / 2,
+                    screenHeight / 2, 25, continueColor);
+
+                DrawText(TextFormat("Continues remaining: %d/%d", maxContinues - continueUses, maxContinues),
+                    screenWidth / 2 - MeasureText(TextFormat("Continues remaining: %d/%d", maxContinues - continueUses, maxContinues), 18) / 2,
+                    screenHeight / 2 + 30, 18, YELLOW);
+
+                if (shop.totalCoins < continueCost) {
+                    DrawText("Not enough coins!",
+                        screenWidth / 2 - MeasureText("Not enough coins!", 20) / 2,
+                        screenHeight / 2 + 55, 20, RED);
+                }
+                else {
+                    DrawText("Get invincibility and clear obstacles!",
+                        screenWidth / 2 - MeasureText("Get invincibility and clear obstacles!", 18) / 2,
+                        screenHeight / 2 + 55, 18, LIME);
+                }
+            }
+            else {
+                DrawText("No continues remaining",
+                    screenWidth / 2 - MeasureText("No continues remaining", 20) / 2,
+                    screenHeight / 2, 20, GRAY);
+                DrawText("Press R to restart from beginning",
+                    screenWidth / 2 - MeasureText("Press R to restart from beginning", 20) / 2,
+                    screenHeight / 2 + 30, 20, WHITE);
+            }
+
+            DrawText("Press M for menu", screenWidth / 2 - MeasureText("Press M for menu", 20) / 2, screenHeight / 2 + 90, 20, WHITE);
+            DrawText("Press S for shop", screenWidth / 2 - MeasureText("Press S for shop", 20) / 2, screenHeight / 2 + 120, 20, GREEN);
         }
         else {
             BeginMode3D(camera);
@@ -1973,7 +2083,10 @@ private:
             DrawText(TextFormat("Location: %s", menu.locations[menu.selectedLocation].name.c_str()), 10, 120, 15, DARKGRAY);
             DrawText(TextFormat("Character: %s", menu.characters[player.characterType].name.c_str()), 10, 140, 15, DARKGRAY);
 
-            int powerUpY = 160;
+            // НОВОЕ: Отображение оставшихся продолжений
+            DrawText(TextFormat("Continues: %d/%d", maxContinues - continueUses, maxContinues), 10, 160, 15, DARKPURPLE);
+
+            int powerUpY = 180;
             if (!player.activePowerUps.empty()) {
                 DrawText("ACTIVE POWER-UPS:", 10, powerUpY, 15, DARKPURPLE);
                 powerUpY += 20;

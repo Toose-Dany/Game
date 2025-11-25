@@ -29,7 +29,7 @@ struct AnimatedTexture {
     int currentFrame;
     float scale;
     bool loaded;
-    
+
     // Конструктор по умолчанию
     AnimatedTexture() : frameDelay(0.1f), currentTime(0.0f), currentFrame(0), scale(1.0f), loaded(false) {}
 };
@@ -37,7 +37,7 @@ struct AnimatedTexture {
 // Функция для загрузки анимированной текстуры из нескольких изображений
 bool LoadAnimatedTexture(AnimatedTexture& animTex, const std::vector<std::string>& frameFiles, float frameDelay) {
     animTex.frames.clear();
-    
+
     for (const auto& filepath : frameFiles) {
         if (FileExists(filepath.c_str())) {
             Image image = LoadImage(filepath.c_str());
@@ -52,7 +52,7 @@ bool LoadAnimatedTexture(AnimatedTexture& animTex, const std::vector<std::string
             TraceLog(LOG_WARNING, "Animation frame not found: %s", filepath.c_str());
         }
     }
-    
+
     if (!animTex.frames.empty()) {
         animTex.frameDelay = frameDelay;
         animTex.currentTime = 0.0f;
@@ -62,7 +62,7 @@ bool LoadAnimatedTexture(AnimatedTexture& animTex, const std::vector<std::string
         TraceLog(LOG_INFO, "Animation loaded: %d frames", (int)animTex.frames.size());
         return true;
     }
-    
+
     animTex.loaded = false;
     return false;
 }
@@ -70,7 +70,7 @@ bool LoadAnimatedTexture(AnimatedTexture& animTex, const std::vector<std::string
 // Функция для обновления анимации
 void UpdateAnimatedTexture(AnimatedTexture& animTex, float deltaTime) {
     if (!animTex.loaded || animTex.frames.empty()) return;
-    
+
     animTex.currentTime += deltaTime;
     if (animTex.currentTime >= animTex.frameDelay) {
         animTex.currentTime = 0.0f;
@@ -80,7 +80,7 @@ void UpdateAnimatedTexture(AnimatedTexture& animTex, float deltaTime) {
 
 // Функция для получения текущего кадра
 Texture2D GetCurrentFrame(const AnimatedTexture& animTex) {
-    if (!animTex.loaded || animTex.frames.empty()) return {0};
+    if (!animTex.loaded || animTex.frames.empty()) return { 0 };
     return animTex.frames[animTex.currentFrame];
 }
 
@@ -123,6 +123,11 @@ struct Player {
     // Эффекты усилений (теперь могут комбинироваться)
     float originalSpeed;
     std::vector<ActivePowerUp> activePowerUps;
+
+    // НОВОЕ: состояние падения
+    bool isFalling;
+    float fallTimer;
+    float fallRotation; // Вращение при падении
 };
 
 // Структура для препятствий
@@ -177,10 +182,10 @@ struct Character {
     Texture2D texture;
     Color defaultColor;
     bool useAnimatedTexture;          // Флаг использования анимированной текстуры
-    
+
     // Конструктор для удобной инициализации
-    Character(const std::string& n, Color color) 
-        : name(n), texture({0}), defaultColor(color), useAnimatedTexture(false) {}
+    Character(const std::string& n, Color color)
+        : name(n), texture({ 0 }), defaultColor(color), useAnimatedTexture(false) {}
 };
 
 // Структура для меню
@@ -302,6 +307,9 @@ private:
     // Анимированные текстуры для персонажей
     std::vector<AnimatedTexture> characterAnimations;
 
+    // НОВОЕ: текстура для падения (PNG картинка)
+    Texture2D fallTexture;
+
 public:
     Game() {
         InitWindow(screenWidth, screenHeight, "Runner 3D with Character Animations");
@@ -328,6 +336,9 @@ public:
         player.laneChangeSpeed = 15.0f;
         player.rollCooldownTimer = 0.0f;
         player.rollDuration = 0.0f;
+        player.isFalling = false; // НОВОЕ: инициализация состояния падения
+        player.fallTimer = 0.0f;
+        player.fallRotation = 0.0f;
 
         // Инициализация эффектов усилений
         player.originalSpeed = player.speed;
@@ -361,9 +372,12 @@ public:
 
         // Загружаем текстуры
         LoadTextures();
-        
+
         // Загружаем анимированные текстуры для персонажей
         LoadCharacterAnimations();
+
+        // НОВОЕ: загружаем PNG текстуру для падения
+        LoadFallTexture();
 
         SetTargetFPS(60);
     }
@@ -384,6 +398,9 @@ public:
         UnloadTexture(magnetTexture);
         UnloadTexture(doublePointsTexture);
 
+        // НОВОЕ: выгружаем текстуру падения
+        UnloadTexture(fallTexture);
+
         CloseWindow();
     }
 
@@ -395,13 +412,76 @@ public:
     }
 
 private:
+    // НОВАЯ ФУНКЦИЯ: загрузка PNG текстуры для падения
+    void LoadFallTexture() {
+        // Пытаемся загрузить пользовательскую PNG текстуру
+        if (FileExists("fall_texture.png")) {
+            Image image = LoadImage("fall_texture.png");
+            if (image.data != NULL) {
+                fallTexture = LoadTextureFromImage(image);
+                UnloadImage(image);
+                TraceLog(LOG_INFO, "Successfully loaded fall texture: fall_texture.png");
+                return;
+            }
+        }
+
+        // Если файл не найден, создаем простую текстуру-заглушку
+        TraceLog(LOG_WARNING, "Fall texture not found: fall_texture.png, using default");
+        fallTexture = CreateDefaultFallTexture();
+    }
+
+    // Функция создания текстуры-заглушки если PNG не найден
+    Texture2D CreateDefaultFallTexture() {
+        Image image = GenImageColor(64, 64, BLANK);
+
+        // Создаем простую текстуру лежащего персонажа как fallback
+        for (int y = 0; y < 64; y++) {
+            for (int x = 0; x < 64; x++) {
+                Color color = BLANK;
+
+                // Тело лежащего персонажа (горизонтальное)
+                if (y >= 30 && y <= 34 && x >= 15 && x <= 49) {
+                    color = RED; // Основной цвет тела
+                }
+
+                // Голова
+                if (x >= 25 && x <= 39 && y >= 20 && y <= 29) {
+                    color = RED;
+                }
+
+                // Детали лица (глаза закрыты)
+                if (x >= 28 && x <= 32 && y >= 23 && y <= 25) {
+                    color = BLACK;
+                }
+
+                // Руки
+                if ((x >= 10 && x <= 15 && y >= 25 && y <= 35) ||
+                    (x >= 49 && x <= 54 && y >= 25 && y <= 35)) {
+                    color = RED;
+                }
+
+                // Ноги
+                if ((x >= 20 && x <= 25 && y >= 35 && y <= 45) ||
+                    (x >= 39 && x <= 44 && y >= 35 && y <= 45)) {
+                    color = RED;
+                }
+
+                ImageDrawPixel(&image, x, y, color);
+            }
+        }
+
+        Texture2D texture = LoadTextureFromImage(image);
+        UnloadImage(image);
+        return texture;
+    }
+
     void LoadCharacterAnimations() {
         // Создаем списки файлов для анимаций каждого персонажа
         std::vector<std::vector<std::string>> characterFrameFiles = {
             // Default character frames
             {
                 "default_frame1.png",
-                "default_frame2.png", 
+                "default_frame2.png",
                 "default_frame3.png",
                 "default_frame4.png"
             },
@@ -409,7 +489,7 @@ private:
             {
                 "ninja_frame1.png",
                 "ninja_frame2.png",
-                "ninja_frame3.png", 
+                "ninja_frame3.png",
                 "ninja_frame4.png"
             },
             // Robot character frames
@@ -427,15 +507,16 @@ private:
                 "girl_frame4.png"
             }
         };
-        
+
         for (int i = 0; i < (int)menu.characters.size(); i++) {
             if (LoadAnimatedTexture(characterAnimations[i], characterFrameFiles[i], 0.1f)) {
                 menu.characters[i].useAnimatedTexture = true;
                 TraceLog(LOG_INFO, "Animated texture loaded for character: %s", menu.characters[i].name.c_str());
-            } else {
+            }
+            else {
                 menu.characters[i].useAnimatedTexture = false;
                 TraceLog(LOG_WARNING, "Failed to load animated texture for character: %s", menu.characters[i].name.c_str());
-                
+
                 // Создаем простую анимацию из цветов как fallback
                 CreateFallbackAnimation(characterAnimations[i], menu.characters[i].defaultColor);
             }
@@ -444,46 +525,46 @@ private:
 
     void CreateFallbackAnimation(AnimatedTexture& animTex, Color baseColor) {
         animTex.frames.clear();
-        
+
         // Создаем 4 кадра с пульсирующим эффектом
         for (int i = 0; i < 4; i++) {
             Image image = GenImageColor(64, 64, BLANK);
-            
+
             float pulse = 0.7f + 0.3f * sin(i * PI / 2); // Пульсация между кадрами
             Color characterColor = ColorBrightness(baseColor, pulse);
-            
+
             // Рисуем простого персонажа
             for (int y = 0; y < 64; y++) {
                 for (int x = 0; x < 64; x++) {
                     Color color = characterColor;
-                    
+
                     // Тело
                     if (x > 15 && x < 49 && y > 15 && y < 49) {
                         color = ColorBrightness(characterColor, 0.8f);
                     }
-                    
+
                     // Глазы (анимированные - двигаются)
                     int eyeOffset = i;
                     if ((x >= 20 + eyeOffset && x <= 25 + eyeOffset && y >= 20 && y <= 25) ||
                         (x >= 35 - eyeOffset && x <= 40 - eyeOffset && y >= 20 && y <= 25)) {
                         color = BLACK;
                     }
-                    
+
                     // Рот (анимированный - меняет выражение)
                     int mouthY = 35 + (i % 2);
                     if (x >= 25 && x <= 39 && y >= mouthY && y <= mouthY + 2) {
                         color = BLACK;
                     }
-                    
+
                     ImageDrawPixel(&image, x, y, color);
                 }
             }
-            
+
             Texture2D frame = LoadTextureFromImage(image);
             animTex.frames.push_back(frame);
             UnloadImage(image);
         }
-        
+
         animTex.frameDelay = 0.15f;
         animTex.currentTime = 0.0f;
         animTex.currentFrame = 0;
@@ -534,6 +615,7 @@ private:
             UnloadTexture(invincibilityTexture);
             UnloadTexture(magnetTexture);
             UnloadTexture(doublePointsTexture);
+            UnloadTexture(fallTexture); // НОВОЕ: выгружаем старую текстуру падения
         }
 
         // Загружаем текстуры способностей (одинаковые для всех локаций)
@@ -551,6 +633,9 @@ private:
         texturesLoaded = AreTexturesLoaded();
 
         TraceLog(LOG_INFO, "All textures loaded: %s", texturesLoaded ? "YES" : "NO");
+
+        // НОВОЕ: перезагружаем текстуру падения
+        LoadFallTexture();
     }
 
     // Функция для загрузки текстур способностей
@@ -1088,7 +1173,7 @@ private:
                 else {
                     DrawCube({ -8.0f, 2.5f, i * 15.0f + environmentOffset }, envSize.x, envSize.y, envSize.z, WHITE);
                 }
-                // Правая сторона с текстурой - самые далекие от дороги
+                // Правая сторона с текстурой - самые далеки от дороги
                 if (IsTextureReady(currentLocation.rightEnvironmentTexture)) {
                     DrawCubeTexture({ 8.0f, 2.5f, i * 15.0f + environmentOffset }, envSize, currentLocation.rightEnvironmentTexture, RAYWHITE);
                 }
@@ -1113,6 +1198,12 @@ private:
         }
 
         if (gameOver) {
+            // НОВОЕ: обрабатываем падение персонажа
+            if (player.isFalling) {
+                UpdatePlayerFall();
+                return;
+            }
+
             if (IsKeyPressed(KEY_R)) {
                 ResetGame();
             }
@@ -1146,6 +1237,28 @@ private:
         if (environmentOffset > 50.0f) environmentOffset = 0.0f;
 
         score += HasPowerUp(PowerUpType::DOUBLE_POINTS) ? 2 : 1;
+    }
+
+    // НОВАЯ ФУНКЦИЯ: обновление анимации падения
+    void UpdatePlayerFall() {
+        player.fallTimer += GetFrameTime();
+
+        // Анимация падения: персонаж падает и вращается
+        if (player.fallTimer < 0.5f) {
+            // Фаза падения
+            player.position.y -= 8.0f * GetFrameTime();
+            player.fallRotation += 180.0f * GetFrameTime(); // Вращение при падении
+        }
+        else if (player.fallTimer < 5.0f) {
+            // Фаза лежания (5 секунд)
+            player.position.y = 0.1f; // Лежит на земле
+            player.fallRotation = 90.0f; // Лежит на боку
+        }
+        else {
+            // После 5 секунд показываем меню
+            player.isFalling = false;
+            // Меню показывается автоматически в Draw()
+        }
     }
 
     void UpdateMenu() {
@@ -1755,6 +1868,10 @@ private:
                     }
 
                     if (!canAvoid) {
+                        // НОВОЕ: вместо мгновенного gameOver запускаем анимацию падения
+                        player.isFalling = true;
+                        player.fallTimer = 0.0f;
+                        player.fallRotation = 0.0f;
                         gameOver = true;
                         return;
                     }
@@ -1801,6 +1918,9 @@ private:
         player.isOnObstacle = false;
         player.rollCooldownTimer = 0.0f;
         player.rollDuration = 0.0f;
+        player.isFalling = false; // НОВОЕ: сбрасываем состояние падения
+        player.fallTimer = 0.0f;
+        player.fallRotation = 0.0f;
 
         obstacles.clear();
         coins.clear();
@@ -1854,17 +1974,23 @@ private:
     }
 
     void DrawPlayer() {
+        // НОВОЕ: если персонаж падает, рисуем специальную анимацию
+        if (player.isFalling) {
+            DrawFallingPlayer();
+            return;
+        }
+
         // Если для текущего персонажа доступна анимированная текстура и она загружена
-        if (menu.characters[player.characterType].useAnimatedTexture && 
+        if (menu.characters[player.characterType].useAnimatedTexture &&
             characterAnimations[player.characterType].loaded) {
-            
+
             AnimatedTexture& animTex = characterAnimations[player.characterType];
             Vector3 scaledSize = {
                 player.size.x * animTex.scale,
                 player.size.y * animTex.scale,
                 player.size.z * animTex.scale
             };
-            
+
             // Используем текущий кадр анимации
             Texture2D currentFrame = GetCurrentFrame(animTex);
             DrawCubeTexture(player.position, scaledSize, currentFrame, WHITE);
@@ -1872,7 +1998,7 @@ private:
         else {
             // Fallback: используем статичную текстуру или цветной куб
             Texture2D characterTexture = GetCharacterTexture();
-            
+
             if (IsTextureReady(characterTexture)) {
                 DrawCubeTexture(player.position, player.size, characterTexture, RAYWHITE);
             }
@@ -1885,6 +2011,33 @@ private:
                 DrawCubeWires(player.position, player.size.x, player.size.y, player.size.z, BLACK);
             }
         }
+    }
+
+    
+    void DrawFallingPlayer() {
+        // Сохраняем текущую матрицу преобразования
+        rlPushMatrix();
+
+        // Перемещаемся к позиции персонажа
+        rlTranslatef(player.position.x, player.position.y, player.position.z);
+
+        // Вращаем персонажа в зависимости от состояния падения
+        rlRotatef(player.fallRotation, 0.0f, 0.0f, 1.0f);
+
+        // ИСПРАВЛЕНИЕ: значительно увеличенные размеры для лежачего персонажа
+        Vector3 fallSize = { player.size.x * 2.0f, 0.8f, player.size.y * 1.5f }; // Еще больше увеличили
+
+        if (IsTextureReady(fallTexture)) {
+            DrawCubeTexture({ 0, 0, 0 }, fallSize, fallTexture, WHITE);
+        }
+        else {
+            // Fallback если текстура не загружена
+            DrawCube({ 0, 0, 0 }, fallSize.x, fallSize.y, fallSize.z, RED);
+            DrawCubeWires({ 0, 0, 0 }, fallSize.x, fallSize.y, fallSize.z, BLACK);
+        }
+
+        // Восстанавливаем матрицу преобразования
+        rlPopMatrix();
     }
 
     void DrawShop() {
@@ -1948,13 +2101,33 @@ private:
             DrawShop();
         }
         else if (gameOver) {
-            DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.5f));
-            DrawText("GAME OVER", screenWidth / 2 - MeasureText("GAME OVER", 40) / 2, screenHeight / 2 - 80, 40, RED);
-            DrawText(TextFormat("Final Score: %d", score), screenWidth / 2 - MeasureText(TextFormat("Final Score: %d", score), 20) / 2, screenHeight / 2 - 30, 20, WHITE);
-            DrawText(TextFormat("Coins Collected: %d", coinsCollected), screenWidth / 2 - MeasureText(TextFormat("Coins Collected: %d", coinsCollected), 20) / 2, screenHeight / 2, 20, GOLD);
-            DrawText("Press R to restart", screenWidth / 2 - MeasureText("Press R to restart", 20) / 2, screenHeight / 2 + 30, 20, WHITE);
-            DrawText("Press M for menu", screenWidth / 2 - MeasureText("Press M for menu", 20) / 2, screenHeight / 2 + 60, 20, WHITE);
-            DrawText("Press S for shop", screenWidth / 2 - MeasureText("Press S for shop", 20) / 2, screenHeight / 2 + 90, 20, GREEN);
+            // НОВОЕ: если персонаж падает, рисуем только 3D сцену с анимацией
+            if (player.isFalling) {
+                BeginMode3D(camera);
+                BeginBlendMode(BLEND_ALPHA);
+
+                Draw3DWorld();
+
+                EndBlendMode();
+                EndMode3D();
+
+                // Показываем таймер падения
+                if (player.fallTimer < 5.0f) {
+                    DrawText(TextFormat("Falling... %.1f", 5.0f - player.fallTimer),
+                        screenWidth / 2 - MeasureText("Falling... 5.0", 30) / 2,
+                        50, 30, RED);
+                }
+            }
+            else {
+                // После завершения падения показываем обычное меню game over
+                DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.5f));
+                DrawText("GAME OVER", screenWidth / 2 - MeasureText("GAME OVER", 40) / 2, screenHeight / 2 - 80, 40, RED);
+                DrawText(TextFormat("Final Score: %d", score), screenWidth / 2 - MeasureText(TextFormat("Final Score: %d", score), 20) / 2, screenHeight / 2 - 30, 20, WHITE);
+                DrawText(TextFormat("Coins Collected: %d", coinsCollected), screenWidth / 2 - MeasureText(TextFormat("Coins Collected: %d", coinsCollected), 20) / 2, screenHeight / 2, 20, GOLD);
+                DrawText("Press R to restart", screenWidth / 2 - MeasureText("Press R to restart", 20) / 2, screenHeight / 2 + 30, 20, WHITE);
+                DrawText("Press M for menu", screenWidth / 2 - MeasureText("Press M for menu", 20) / 2, screenHeight / 2 + 60, 20, WHITE);
+                DrawText("Press S for shop", screenWidth / 2 - MeasureText("Press S for shop", 20) / 2, screenHeight / 2 + 90, 20, GREEN);
+            }
         }
         else {
             BeginMode3D(camera);
