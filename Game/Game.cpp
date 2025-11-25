@@ -123,6 +123,11 @@ struct Player {
     // Эффекты усилений (теперь могут комбинироваться)
     float originalSpeed;
     std::vector<ActivePowerUp> activePowerUps;
+
+    // НОВОЕ: состояние падения
+    bool isFalling;
+    float fallTimer;
+    float fallRotation; // Вращение при падении
 };
 
 // Структура для препятствий
@@ -276,17 +281,12 @@ private:
     int score;
     int coinsCollected;
     bool gameOver;
-    bool continueAvailable; // НОВОЕ: доступно ли продолжение
-    int continueCost;       // НОВОЕ: стоимость продолжения
-    int continueUses;       // НОВОЕ: количество использований продолжения
-    const int maxContinues = 3; // НОВОЕ: максимальное количество продолжений
 
     float laneWidth;
     float lanePositions[3];
 
     Camera3D camera;
     float gameSpeed;
-    float initialGameSpeed; // НОВОЕ: начальная скорость игры
 
     Menu menu;
     Shop shop;
@@ -306,6 +306,9 @@ private:
 
     // Анимированные текстуры для персонажей
     std::vector<AnimatedTexture> characterAnimations;
+
+    // НОВОЕ: текстура для падения (PNG картинка)
+    Texture2D fallTexture;
 
 public:
     Game() {
@@ -333,6 +336,9 @@ public:
         player.laneChangeSpeed = 15.0f;
         player.rollCooldownTimer = 0.0f;
         player.rollDuration = 0.0f;
+        player.isFalling = false; // НОВОЕ: инициализация состояния падения
+        player.fallTimer = 0.0f;
+        player.fallRotation = 0.0f;
 
         // Инициализация эффектов усилений
         player.originalSpeed = player.speed;
@@ -354,12 +360,8 @@ public:
         score = 0;
         coinsCollected = 0;
         gameOver = false;
-        continueAvailable = true; // НОВОЕ: продолжение доступно
-        continueCost = 10;       // НОВОЕ: начальная стоимость продолжения
-        continueUses = 0;        // НОВОЕ: количество использований
 
         gameSpeed = 5.0f;
-        initialGameSpeed = gameSpeed; // НОВОЕ: сохраняем начальную скорость
 
         // Настройки по умолчанию
         texturesLoaded = false;
@@ -373,6 +375,9 @@ public:
 
         // Загружаем анимированные текстуры для персонажей
         LoadCharacterAnimations();
+
+        // НОВОЕ: загружаем PNG текстуру для падения
+        LoadFallTexture();
 
         SetTargetFPS(60);
     }
@@ -393,6 +398,9 @@ public:
         UnloadTexture(magnetTexture);
         UnloadTexture(doublePointsTexture);
 
+        // НОВОЕ: выгружаем текстуру падения
+        UnloadTexture(fallTexture);
+
         CloseWindow();
     }
 
@@ -404,6 +412,69 @@ public:
     }
 
 private:
+    // НОВАЯ ФУНКЦИЯ: загрузка PNG текстуры для падения
+    void LoadFallTexture() {
+        // Пытаемся загрузить пользовательскую PNG текстуру
+        if (FileExists("fall_texture.png")) {
+            Image image = LoadImage("fall_texture.png");
+            if (image.data != NULL) {
+                fallTexture = LoadTextureFromImage(image);
+                UnloadImage(image);
+                TraceLog(LOG_INFO, "Successfully loaded fall texture: fall_texture.png");
+                return;
+            }
+        }
+
+        // Если файл не найден, создаем простую текстуру-заглушку
+        TraceLog(LOG_WARNING, "Fall texture not found: fall_texture.png, using default");
+        fallTexture = CreateDefaultFallTexture();
+    }
+
+    // Функция создания текстуры-заглушки если PNG не найден
+    Texture2D CreateDefaultFallTexture() {
+        Image image = GenImageColor(64, 64, BLANK);
+
+        // Создаем простую текстуру лежащего персонажа как fallback
+        for (int y = 0; y < 64; y++) {
+            for (int x = 0; x < 64; x++) {
+                Color color = BLANK;
+
+                // Тело лежащего персонажа (горизонтальное)
+                if (y >= 30 && y <= 34 && x >= 15 && x <= 49) {
+                    color = RED; // Основной цвет тела
+                }
+
+                // Голова
+                if (x >= 25 && x <= 39 && y >= 20 && y <= 29) {
+                    color = RED;
+                }
+
+                // Детали лица (глаза закрыты)
+                if (x >= 28 && x <= 32 && y >= 23 && y <= 25) {
+                    color = BLACK;
+                }
+
+                // Руки
+                if ((x >= 10 && x <= 15 && y >= 25 && y <= 35) ||
+                    (x >= 49 && x <= 54 && y >= 25 && y <= 35)) {
+                    color = RED;
+                }
+
+                // Ноги
+                if ((x >= 20 && x <= 25 && y >= 35 && y <= 45) ||
+                    (x >= 39 && x <= 44 && y >= 35 && y <= 45)) {
+                    color = RED;
+                }
+
+                ImageDrawPixel(&image, x, y, color);
+            }
+        }
+
+        Texture2D texture = LoadTextureFromImage(image);
+        UnloadImage(image);
+        return texture;
+    }
+
     void LoadCharacterAnimations() {
         // Создаем списки файлов для анимаций каждого персонажа
         std::vector<std::vector<std::string>> characterFrameFiles = {
@@ -544,6 +615,7 @@ private:
             UnloadTexture(invincibilityTexture);
             UnloadTexture(magnetTexture);
             UnloadTexture(doublePointsTexture);
+            UnloadTexture(fallTexture); // НОВОЕ: выгружаем старую текстуру падения
         }
 
         // Загружаем текстуры способностей (одинаковые для всех локаций)
@@ -561,6 +633,9 @@ private:
         texturesLoaded = AreTexturesLoaded();
 
         TraceLog(LOG_INFO, "All textures loaded: %s", texturesLoaded ? "YES" : "NO");
+
+        // НОВОЕ: перезагружаем текстуру падения
+        LoadFallTexture();
     }
 
     // Функция для загрузки текстур способностей
@@ -1098,7 +1173,7 @@ private:
                 else {
                     DrawCube({ -8.0f, 2.5f, i * 15.0f + environmentOffset }, envSize.x, envSize.y, envSize.z, WHITE);
                 }
-                // Правая сторона с текстурой - самые далекие от дороги
+                // Правая сторона с текстурой - самые далеки от дороги
                 if (IsTextureReady(currentLocation.rightEnvironmentTexture)) {
                     DrawCubeTexture({ 8.0f, 2.5f, i * 15.0f + environmentOffset }, envSize, currentLocation.rightEnvironmentTexture, RAYWHITE);
                 }
@@ -1123,7 +1198,15 @@ private:
         }
 
         if (gameOver) {
-            // УДАЛЕНО: обработка клавиши R для рестарта
+            // НОВОЕ: обрабатываем падение персонажа
+            if (player.isFalling) {
+                UpdatePlayerFall();
+                return;
+            }
+
+            if (IsKeyPressed(KEY_R)) {
+                ResetGame();
+            }
             if (IsKeyPressed(KEY_M)) {
                 menu.isActive = true;
             }
@@ -1131,14 +1214,6 @@ private:
                 // Переход в магазин после игры
                 shop.totalCoins += coinsCollected;
                 shop.isActive = true;
-            }
-            // НОВОЕ: Обработка продолжения за монетки - теперь это основной способ продолжения
-            if (IsKeyPressed(KEY_C) && continueAvailable && shop.totalCoins >= continueCost) {
-                ContinueGame();
-            }
-            // НОВОЕ: Добавлена клавиша R для полного рестарта (только если нет продолжений)
-            if (IsKeyPressed(KEY_R) && !continueAvailable) {
-                ResetGame();
             }
             return;
         }
@@ -1164,59 +1239,25 @@ private:
         score += HasPowerUp(PowerUpType::DOUBLE_POINTS) ? 2 : 1;
     }
 
-    // НОВАЯ ФУНКЦИЯ: Продолжение игры за монетки - теперь это основной способ
-    void ContinueGame() {
-        if (continueAvailable && shop.totalCoins >= continueCost) {
-            // Списываем монетки
-            shop.totalCoins -= continueCost;
+    // НОВАЯ ФУНКЦИЯ: обновление анимации падения
+    void UpdatePlayerFall() {
+        player.fallTimer += GetFrameTime();
 
-            // Увеличиваем количество использований
-            continueUses++;
-
-            // Проверяем, достигли ли максимального количества продолжений
-            if (continueUses >= maxContinues) {
-                continueAvailable = false;
-            }
-            else {
-                // Увеличиваем стоимость следующего продолжения
-                continueCost = static_cast<int>(continueCost * 1.5f);
-            }
-
-            // Восстанавливаем игру
-            gameOver = false;
-
-            // Очищаем препятствия перед игроком
-            ClearObstaclesInFront();
-
-            // Даем кратковременную неуязвимость
-            ApplyPowerUp(PowerUpType::INVINCIBILITY);
-
-            // Увеличиваем скорость для компенсации
-            gameSpeed += 1.0f;
-
-            TraceLog(LOG_INFO, "Game continued for %d coins (use %d/%d)", continueCost, continueUses, maxContinues);
+        // Анимация падения: персонаж падает и вращается
+        if (player.fallTimer < 0.5f) {
+            // Фаза падения
+            player.position.y -= 8.0f * GetFrameTime();
+            player.fallRotation += 180.0f * GetFrameTime(); // Вращение при падении
         }
-    }
-
-    // НОВАЯ ФУНКЦИЯ: Очистка препятствий перед игроком
-    void ClearObstaclesInFront() {
-        for (auto& obstacle : obstacles) {
-            if (obstacle.position.z > player.position.z - 5.0f && obstacle.position.z < player.position.z + 10.0f) {
-                obstacle.active = false;
-            }
+        else if (player.fallTimer < 5.0f) {
+            // Фаза лежания (5 секунд)
+            player.position.y = 0.1f; // Лежит на земле
+            player.fallRotation = 90.0f; // Лежит на боку
         }
-
-        // Также очищаем монеты и усиления для перебалансировки
-        for (auto& coin : coins) {
-            if (coin.position.z > player.position.z - 5.0f && coin.position.z < player.position.z + 10.0f) {
-                coin.active = false;
-            }
-        }
-
-        for (auto& powerUp : powerUps) {
-            if (powerUp.position.z > player.position.z - 5.0f && powerUp.position.z < player.position.z + 10.0f) {
-                powerUp.active = false;
-            }
+        else {
+            // После 5 секунд показываем меню
+            player.isFalling = false;
+            // Меню показывается автоматически в Draw()
         }
     }
 
@@ -1247,10 +1288,6 @@ private:
         if (IsKeyPressed(KEY_ENTER)) {
             player.characterType = menu.selectedCharacter;
             menu.isActive = false;
-            // НОВОЕ: Сбрасываем продолжения при старте новой игры из меню
-            continueUses = 0;
-            continueAvailable = true;
-            continueCost = 50;
         }
 
         if (oldLocation != menu.selectedLocation) {
@@ -1831,6 +1868,10 @@ private:
                     }
 
                     if (!canAvoid) {
+                        // НОВОЕ: вместо мгновенного gameOver запускаем анимацию падения
+                        player.isFalling = true;
+                        player.fallTimer = 0.0f;
+                        player.fallRotation = 0.0f;
                         gameOver = true;
                         return;
                     }
@@ -1877,6 +1918,9 @@ private:
         player.isOnObstacle = false;
         player.rollCooldownTimer = 0.0f;
         player.rollDuration = 0.0f;
+        player.isFalling = false; // НОВОЕ: сбрасываем состояние падения
+        player.fallTimer = 0.0f;
+        player.fallRotation = 0.0f;
 
         obstacles.clear();
         coins.clear();
@@ -1886,10 +1930,6 @@ private:
         score = 0;
         coinsCollected = 0;
         gameOver = false;
-        continueAvailable = true; // НОВОЕ: сбрасываем возможность продолжения
-        continueCost = 50;       // НОВОЕ: сбрасываем стоимость продолжения
-        continueUses = 0;        // НОВОЕ: сбрасываем количество использований
-        gameSpeed = initialGameSpeed; // НОВОЕ: сбрасываем скорость игры
         environmentOffset = 0.0f;
     }
 
@@ -1934,6 +1974,12 @@ private:
     }
 
     void DrawPlayer() {
+        // НОВОЕ: если персонаж падает, рисуем специальную анимацию
+        if (player.isFalling) {
+            DrawFallingPlayer();
+            return;
+        }
+
         // Если для текущего персонажа доступна анимированная текстура и она загружена
         if (menu.characters[player.characterType].useAnimatedTexture &&
             characterAnimations[player.characterType].loaded) {
@@ -1965,6 +2011,33 @@ private:
                 DrawCubeWires(player.position, player.size.x, player.size.y, player.size.z, BLACK);
             }
         }
+    }
+
+
+    void DrawFallingPlayer() {
+        // Сохраняем текущую матрицу преобразования
+        rlPushMatrix();
+
+        // Перемещаемся к позиции персонажа
+        rlTranslatef(player.position.x, player.position.y, player.position.z);
+
+        // Вращаем персонажа в зависимости от состояния падения
+        rlRotatef(player.fallRotation, 0.0f, 0.0f, 1.0f);
+
+        // ИСПРАВЛЕНИЕ: значительно увеличенные размеры для лежачего персонажа
+        Vector3 fallSize = { player.size.x * 2.0f, 0.8f, player.size.y * 1.5f }; // Еще больше увеличили
+
+        if (IsTextureReady(fallTexture)) {
+            DrawCubeTexture({ 0, 0, 0 }, fallSize, fallTexture, WHITE);
+        }
+        else {
+            // Fallback если текстура не загружена
+            DrawCube({ 0, 0, 0 }, fallSize.x, fallSize.y, fallSize.z, RED);
+            DrawCubeWires({ 0, 0, 0 }, fallSize.x, fallSize.y, fallSize.z, BLACK);
+        }
+
+        // Восстанавливаем матрицу преобразования
+        rlPopMatrix();
     }
 
     void DrawShop() {
@@ -2028,44 +2101,33 @@ private:
             DrawShop();
         }
         else if (gameOver) {
-            DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.5f));
-            DrawText("GAME OVER", screenWidth / 2 - MeasureText("GAME OVER", 40) / 2, screenHeight / 2 - 120, 40, RED);
-            DrawText(TextFormat("Final Score: %d", score), screenWidth / 2 - MeasureText(TextFormat("Final Score: %d", score), 20) / 2, screenHeight / 2 - 70, 20, WHITE);
-            DrawText(TextFormat("Coins Collected: %d", coinsCollected), screenWidth / 2 - MeasureText(TextFormat("Coins Collected: %d", coinsCollected), 20) / 2, screenHeight / 2 - 40, 20, GOLD);
+            // НОВОЕ: если персонаж падает, рисуем только 3D сцену с анимацией
+            if (player.isFalling) {
+                BeginMode3D(camera);
+                BeginBlendMode(BLEND_ALPHA);
 
-            // НОВОЕ: Отображение опции продолжения как основного способа
-            if (continueAvailable) {
-                Color continueColor = (shop.totalCoins >= continueCost) ? GREEN : RED;
-                DrawText(TextFormat("Press C to Continue - %d coins", continueCost),
-                    screenWidth / 2 - MeasureText(TextFormat("Press C to Continue - %d coins", continueCost), 25) / 2,
-                    screenHeight / 2, 25, continueColor);
+                Draw3DWorld();
 
-                DrawText(TextFormat("Continues remaining: %d/%d", maxContinues - continueUses, maxContinues),
-                    screenWidth / 2 - MeasureText(TextFormat("Continues remaining: %d/%d", maxContinues - continueUses, maxContinues), 18) / 2,
-                    screenHeight / 2 + 30, 18, YELLOW);
+                EndBlendMode();
+                EndMode3D();
 
-                if (shop.totalCoins < continueCost) {
-                    DrawText("Not enough coins!",
-                        screenWidth / 2 - MeasureText("Not enough coins!", 20) / 2,
-                        screenHeight / 2 + 55, 20, RED);
-                }
-                else {
-                    DrawText("Get invincibility and clear obstacles!",
-                        screenWidth / 2 - MeasureText("Get invincibility and clear obstacles!", 18) / 2,
-                        screenHeight / 2 + 55, 18, LIME);
+                // Показываем таймер падения
+                if (player.fallTimer < 5.0f) {
+                    DrawText(TextFormat("Falling... %.1f", 5.0f - player.fallTimer),
+                        screenWidth / 2 - MeasureText("Falling... 5.0", 30) / 2,
+                        50, 30, RED);
                 }
             }
             else {
-                DrawText("No continues remaining",
-                    screenWidth / 2 - MeasureText("No continues remaining", 20) / 2,
-                    screenHeight / 2, 20, GRAY);
-                DrawText("Press R to restart from beginning",
-                    screenWidth / 2 - MeasureText("Press R to restart from beginning", 20) / 2,
-                    screenHeight / 2 + 30, 20, WHITE);
+                // После завершения падения показываем обычное меню game over
+                DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.5f));
+                DrawText("GAME OVER", screenWidth / 2 - MeasureText("GAME OVER", 40) / 2, screenHeight / 2 - 80, 40, RED);
+                DrawText(TextFormat("Final Score: %d", score), screenWidth / 2 - MeasureText(TextFormat("Final Score: %d", score), 20) / 2, screenHeight / 2 - 30, 20, WHITE);
+                DrawText(TextFormat("Coins Collected: %d", coinsCollected), screenWidth / 2 - MeasureText(TextFormat("Coins Collected: %d", coinsCollected), 20) / 2, screenHeight / 2, 20, GOLD);
+                DrawText("Press R to restart", screenWidth / 2 - MeasureText("Press R to restart", 20) / 2, screenHeight / 2 + 30, 20, WHITE);
+                DrawText("Press M for menu", screenWidth / 2 - MeasureText("Press M for menu", 20) / 2, screenHeight / 2 + 60, 20, WHITE);
+                DrawText("Press S for shop", screenWidth / 2 - MeasureText("Press S for shop", 20) / 2, screenHeight / 2 + 90, 20, GREEN);
             }
-
-            DrawText("Press M for menu", screenWidth / 2 - MeasureText("Press M for menu", 20) / 2, screenHeight / 2 + 90, 20, WHITE);
-            DrawText("Press S for shop", screenWidth / 2 - MeasureText("Press S for shop", 20) / 2, screenHeight / 2 + 120, 20, GREEN);
         }
         else {
             BeginMode3D(camera);
@@ -2083,10 +2145,7 @@ private:
             DrawText(TextFormat("Location: %s", menu.locations[menu.selectedLocation].name.c_str()), 10, 120, 15, DARKGRAY);
             DrawText(TextFormat("Character: %s", menu.characters[player.characterType].name.c_str()), 10, 140, 15, DARKGRAY);
 
-            // НОВОЕ: Отображение оставшихся продолжений
-            DrawText(TextFormat("Continues: %d/%d", maxContinues - continueUses, maxContinues), 10, 160, 15, DARKPURPLE);
-
-            int powerUpY = 180;
+            int powerUpY = 160;
             if (!player.activePowerUps.empty()) {
                 DrawText("ACTIVE POWER-UPS:", 10, powerUpY, 15, DARKPURPLE);
                 powerUpY += 20;
