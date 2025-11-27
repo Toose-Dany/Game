@@ -188,6 +188,41 @@ struct Character {
         : name(n), texture({ 0 }), defaultColor(color), useAnimatedTexture(false) {}
 };
 
+// НОВАЯ СТРУКТУРА: персонаж-компаньон (ОБНОВЛЕННАЯ)
+struct Companion {
+    Vector3 position;
+    Vector3 size;
+    Vector3 originalSize; // Сохраняем оригинальный размер
+    Color color;
+    float speed;
+    int lane;
+    int targetLane;
+    bool isActive;
+    float followDistance; // Дистанция следования за игроком (ПОЛОЖИТЕЛЬНАЯ - значит СЗАДИ)
+    Texture2D texture; // Текстура компаньона
+    bool useAnimatedTexture;
+    AnimatedTexture animation;
+
+    // НОВОЕ: состояния как у игрока
+    bool isJumping;
+    bool isRolling;
+    float jumpVelocity;
+    float gravity;
+    bool isOnObstacle;
+
+    // НОВОЕ: таймеры для поведения
+    float followBehindTimer; // Таймер следования сзади (5 секунд)
+    float catchUpTimer;      // Таймер догоняния после столкновения
+    bool isCatchingUp;       // Флаг режима догоняния
+
+    // Конструктор
+    Companion() : position({ 0, 0, 0 }), size({ 0.8f, 1.6f, 0.8f }), originalSize({ 0.8f, 1.6f, 0.8f }), color(PURPLE), speed(5.0f),
+        lane(1), targetLane(1), isActive(false), followDistance(3.0f),
+        texture({ 0 }), useAnimatedTexture(false),
+        isJumping(false), isRolling(false), jumpVelocity(0), gravity(15.0f), isOnObstacle(false),
+        followBehindTimer(5.0f), catchUpTimer(0.0f), isCatchingUp(false) {}
+};
+
 // Структура для меню
 struct Menu {
     bool isActive;
@@ -267,6 +302,7 @@ private:
     const int screenHeight = 900;
 
     Player player;
+    Companion companion; // НОВОЕ: персонаж-компаньон
     std::vector<Obstacle> obstacles;
     std::vector<Coin> coins;
     std::vector<PowerUp> powerUps;
@@ -344,6 +380,10 @@ public:
         player.originalSpeed = player.speed;
         player.activePowerUps.clear();
 
+        // ИСПРАВЛЕНО: компаньон начинает СЗАДИ игрока (положительное Z)
+        companion.position = { lanePositions[1], 1.0f, player.position.z + companion.followDistance };
+        companion.isActive = true;
+
         // Инициализация 3D камеры
         camera.position = { 0.0f, 5.0f, 10.0f };
         camera.target = { player.position.x, player.position.y, player.position.z };
@@ -379,6 +419,9 @@ public:
         // НОВОЕ: загружаем PNG текстуру для падения
         LoadFallTexture();
 
+        // НОВОЕ: загружаем текстуру для компаньона
+        LoadCompanionTexture();
+
         SetTargetFPS(60);
     }
 
@@ -400,6 +443,9 @@ public:
 
         // НОВОЕ: выгружаем текстуру падения
         UnloadTexture(fallTexture);
+
+        // НОВОЕ: выгружаем текстуру компаньона
+        UnloadTexture(companion.texture);
 
         CloseWindow();
     }
@@ -428,6 +474,40 @@ private:
         // Если файл не найден, создаем простую текстуру-заглушку
         TraceLog(LOG_WARNING, "Fall texture not found: fall_texture.png, using default");
         fallTexture = CreateDefaultFallTexture();
+    }
+
+    // НОВАЯ ФУНКЦИЯ: загрузка текстуры для компаньона (УПРОЩЕННАЯ ВЕРСИЯ)
+    void LoadCompanionTexture() {
+        // Пытаемся загрузить пользовательскую PNG текстуру для компаньона
+        if (FileExists("companion.png")) {
+            Image image = LoadImage("companion.png");
+            if (image.data != NULL) {
+                companion.texture = LoadTextureFromImage(image);
+                UnloadImage(image);
+                companion.useAnimatedTexture = false;
+                TraceLog(LOG_INFO, "Successfully loaded companion texture: companion.png");
+                return;
+            }
+        }
+
+        // Пытаемся загрузить GIF как анимацию (последовательность кадров)
+        std::vector<std::string> gifFrames = {
+            "companion_frame1.png",
+            "companion_frame2.png",
+            "companion_frame3.png",
+            "companion_frame4.png"
+        };
+
+        if (LoadAnimatedTexture(companion.animation, gifFrames, 0.1f)) {
+            companion.useAnimatedTexture = true;
+            TraceLog(LOG_INFO, "Successfully loaded companion animation with %d frames", (int)companion.animation.frames.size());
+            return;
+        }
+
+        // Если ничего не найдено, используем простой цветной куб
+        TraceLog(LOG_WARNING, "Companion texture not found, using colored cube");
+        companion.texture = { 0 }; // Пустая текстура
+        companion.useAnimatedTexture = false;
     }
 
     // Функция создания текстуры-заглушки если PNG не найден
@@ -616,6 +696,7 @@ private:
             UnloadTexture(magnetTexture);
             UnloadTexture(doublePointsTexture);
             UnloadTexture(fallTexture); // НОВОЕ: выгружаем старую текстуру падения
+            UnloadTexture(companion.texture); // НОВОЕ: выгружаем старую текстуру компаньона
         }
 
         // Загружаем текстуры способностей (одинаковые для всех локаций)
@@ -636,6 +717,9 @@ private:
 
         // НОВОЕ: перезагружаем текстуру падения
         LoadFallTexture();
+
+        // НОВОЕ: перезагружаем текстуру компаньона
+        LoadCompanionTexture();
     }
 
     // Функция для загрузки текстур способностей
@@ -1091,6 +1175,44 @@ private:
         }
     }
 
+    // ОБНОВЛЕННАЯ ФУНКЦИЯ: отрисовка компаньона
+    void DrawCompanion() {
+        if (!companion.isActive) return;
+
+        Vector3 drawPosition = companion.position;
+        Vector3 drawSize = companion.size;
+
+        // Если компаньон в перекате, корректируем позицию для визуального эффекта
+        if (companion.isRolling) {
+            drawPosition.y = 0.5f; // Ниже к земле
+        }
+
+        // Если есть анимированная текстура и она загружена
+        if (companion.useAnimatedTexture && companion.animation.loaded) {
+            UpdateAnimatedTexture(companion.animation, GetFrameTime());
+            Texture2D currentFrame = GetCurrentFrame(companion.animation);
+            DrawCubeTexture(drawPosition, drawSize, currentFrame, RAYWHITE);
+        }
+        // Если есть статичная текстура и она загружена
+        else if (IsTextureReady(companion.texture)) {
+            DrawCubeTexture(drawPosition, drawSize, companion.texture, RAYWHITE);
+        }
+        else {
+            // Fallback - рисуем простой цветной куб если текстура не загружена
+            Color companionColor = companion.color;
+            if (companion.isCatchingUp) {
+                // Подсвечиваем при догонянии
+                companionColor = ColorBrightness(companion.color, 1.5f);
+            }
+            if (companion.followBehindTimer <= 0) {
+                // Подсвечиваем когда отстаем
+                companionColor = ColorBrightness(PURPLE, 0.7f);
+            }
+            DrawCube(drawPosition, drawSize.x, drawSize.y, drawSize.z, companionColor);
+            DrawCubeWires(drawPosition, drawSize.x, drawSize.y, drawSize.z, BLACK);
+        }
+    }
+
     // НОВОЕ: Функция для отрисовки окружения с учетом локации
     void DrawEnvironment() {
         const Location& currentLocation = menu.locations[menu.selectedLocation];
@@ -1226,6 +1348,7 @@ private:
 
         HandleInput();
         UpdatePlayer();
+        UpdateCompanion(); // НОВОЕ: обновляем компаньона
         UpdateObstacles();
         UpdateCoins();
         UpdatePowerUps();
@@ -1237,6 +1360,150 @@ private:
         if (environmentOffset > 50.0f) environmentOffset = 0.0f;
 
         score += HasPowerUp(PowerUpType::DOUBLE_POINTS) ? 2 : 1;
+    }
+
+    // НОВАЯ ФУНКЦИЯ: обновление компаньона (ПЕРЕРАБОТАНА)
+    void UpdateCompanion() {
+        if (!companion.isActive) return;
+
+        // Обновление состояний прыжка и переката (повторяем за игроком)
+        UpdateCompanionStates();
+
+        // Определение режима поведения
+        if (companion.followBehindTimer > 0) {
+            // Первые 5 секунд - бежим ВМЕСТЕ с игроком
+            companion.followBehindTimer -= GetFrameTime();
+            companion.followDistance = 3.0f; // Нормальная дистанция
+            companion.speed = player.originalSpeed; // Такая же скорость как у игрока
+        }
+        else {
+            // После 5 секунд - начинаем ОТСТАВАТЬ
+            companion.followDistance = 8.0f; // Большая дистанция сзади
+            companion.speed = player.originalSpeed * 0.8f; // Медленнее игрока
+            companion.isCatchingUp = false;
+        }
+
+        // Компаньон следует за игроком на выбранной дистанции
+        companion.targetLane = player.targetLane; // Следуем за целевой полосой игрока
+
+        // Плавное перемещение между полосами
+        float targetX = lanePositions[companion.targetLane];
+        if (fabs(companion.position.x - targetX) > 0.01f) {
+            float direction = (targetX > companion.position.x) ? 1.0f : -1.0f;
+            companion.position.x += direction * companion.speed * 0.8f * GetFrameTime();
+
+            if ((direction > 0 && companion.position.x > targetX) ||
+                (direction < 0 && companion.position.x < targetX)) {
+                companion.position.x = targetX;
+                companion.lane = companion.targetLane;
+            }
+        }
+        else {
+            companion.lane = companion.targetLane;
+        }
+
+        // Позиционирование по Z с учетом выбранной дистанции
+        companion.position.z = player.position.z + companion.followDistance;
+
+        // Обновление высоты (учет прыжков и препятствий)
+        UpdateCompanionHeight();
+    }
+
+    // НОВАЯ ФУНКЦИЯ: обновление состояний компаньона (ПОВТОРЯЕТ ДЕЙСТВИЯ ИГРОКА)
+    void UpdateCompanionStates() {
+        // ПОВТОРЯЕМ ДЕЙСТВИЯ ИГРОКА С НЕБОЛЬШОЙ ЗАДЕРЖКОЙ
+
+        // Прыжок - повторяем с небольшой задержкой
+        if (player.isJumping && !companion.isJumping) {
+            companion.isJumping = true;
+            companion.jumpVelocity = 8.0f;
+            companion.isOnObstacle = false;
+        }
+
+        // Перекат - повторяем с небольшой задержкой  
+        if (player.isRolling && !companion.isRolling) {
+            companion.isRolling = true;
+            companion.size.y = 1.0f; // Уменьшаем высоту для переката
+            companion.size.z = 1.2f; // Увеличиваем длину для переката
+            if (!companion.isJumping && !companion.isOnObstacle) {
+                companion.position.y = 0.5f;
+            }
+        }
+
+        // Завершение переката
+        if (!player.isRolling && companion.isRolling) {
+            companion.isRolling = false;
+            companion.size = companion.originalSize; // Возвращаем оригинальный размер
+            if (!companion.isJumping && !companion.isOnObstacle) {
+                companion.position.y = 1.0f;
+            }
+        }
+
+        // Обновление прыжка (физика такая же как у игрока)
+        if (companion.isJumping) {
+            companion.position.y += companion.jumpVelocity * GetFrameTime();
+            companion.jumpVelocity -= companion.gravity * GetFrameTime();
+
+            if (companion.jumpVelocity < 0) { // Падаем вниз
+                float groundHeight = 1.0f;
+                float obstacleHeight = CheckCompanionObstacleLanding();
+
+                if (obstacleHeight > groundHeight) {
+                    if (companion.position.y <= obstacleHeight) {
+                        companion.position.y = obstacleHeight;
+                        companion.isJumping = false;
+                        companion.jumpVelocity = 0;
+                        companion.isOnObstacle = true;
+                    }
+                }
+                else {
+                    if (companion.position.y <= groundHeight) {
+                        companion.position.y = groundHeight;
+                        companion.isJumping = false;
+                        companion.jumpVelocity = 0;
+                        companion.isOnObstacle = false;
+                    }
+                }
+            }
+        }
+    }
+
+    // НОВАЯ ФУНКЦИЯ: проверка приземления компаньона на препятствия
+    float CheckCompanionObstacleLanding() {
+        float highestObstacle = 1.0f;
+
+        for (auto& obstacle : obstacles) {
+            if (obstacle.active && obstacle.lane == companion.lane && obstacle.canLandOn) {
+                BoundingBox companionBox = GetCompanionFrontFaceBox();
+                BoundingBox obstacleBox = GetObstacleFrontFaceBox(obstacle);
+
+                if (CheckCollisionBoxes(companionBox, obstacleBox)) {
+                    float obstacleTop = obstacle.position.y + obstacle.size.y / 2;
+                    if (obstacleTop > highestObstacle) {
+                        highestObstacle = obstacleTop;
+                    }
+                }
+            }
+        }
+
+        return highestObstacle;
+    }
+
+    // НОВАЯ ФУНКЦИЯ: получение bounding box для передней грани компаньона
+    BoundingBox GetCompanionFrontFaceBox() {
+        float frontOffset = companion.size.z / 2;
+        return {
+            { companion.position.x - companion.size.x / 2, companion.position.y - companion.size.y / 2, companion.position.z + frontOffset - 0.1f },
+            { companion.position.x + companion.size.x / 2, companion.position.y + companion.size.y / 2, companion.position.z + frontOffset + 0.1f }
+        };
+    }
+
+    // НОВАЯ ФУНКЦИЯ: обновление высоты компаньона (УПРОЩЕННАЯ)
+    void UpdateCompanionHeight() {
+        // Просто поддерживаем правильную высоту в зависимости от состояния
+        if (!companion.isJumping && !companion.isRolling && !companion.isOnObstacle) {
+            companion.position.y = 1.0f;
+        }
     }
 
     // НОВАЯ ФУНКЦИЯ: обновление анимации падения
@@ -1266,6 +1533,7 @@ private:
 
         // Обработка входа в магазин из меню
         if (IsKeyPressed(KEY_S)) {
+            shop.totalCoins += coinsCollected; // ИСПРАВЛЕНИЕ: добавляем монеты в магазин
             shop.isActive = true;
             menu.isActive = false;
             return;
@@ -1311,6 +1579,8 @@ private:
 
         // Выход из магазина - возврат в меню
         if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_M) || IsKeyPressed(KEY_S)) {
+            // ИСПРАВЛЕНИЕ: сбрасываем coinsCollected только после того как они были добавлены в магазин
+            coinsCollected = 0;
             shop.isActive = false;
             menu.isActive = true;
         }
@@ -1907,6 +2177,7 @@ private:
         }
     }
 
+    // ОБНОВЛЕННАЯ ФУНКЦИЯ: сброса игры
     void ResetGame() {
         player.position = { lanePositions[1], 1.0f, 0.0f };
         player.lane = 1;
@@ -1918,9 +2189,22 @@ private:
         player.isOnObstacle = false;
         player.rollCooldownTimer = 0.0f;
         player.rollDuration = 0.0f;
-        player.isFalling = false; // НОВОЕ: сбрасываем состояние падения
+        player.isFalling = false;
         player.fallTimer = 0.0f;
         player.fallRotation = 0.0f;
+
+        // Сброс компаньона
+        companion.position = { lanePositions[1], 1.0f, player.position.z + companion.followDistance };
+        companion.lane = 1;
+        companion.targetLane = 1;
+        companion.isJumping = false;
+        companion.isRolling = false;
+        companion.jumpVelocity = 0;
+        companion.isOnObstacle = false;
+        companion.size = companion.originalSize; // Восстанавливаем оригинальный размер
+        companion.followBehindTimer = 5.0f; // 5 секунд бежим ВМЕСТЕ с игроком
+        companion.catchUpTimer = 0.0f;
+        companion.isCatchingUp = false;
 
         obstacles.clear();
         coins.clear();
@@ -1928,7 +2212,6 @@ private:
         player.activePowerUps.clear();
 
         score = 0;
-        coinsCollected = 0;
         gameOver = false;
         environmentOffset = 0.0f;
     }
@@ -1966,7 +2249,9 @@ private:
             DrawPowerUp(powerUp);
         }
 
+        // ИСПРАВЛЕНО: рисуем компаньона ПОСЛЕ игрока (чтобы он был СЗАДИ)
         DrawPlayer();
+        DrawCompanion();
 
         if (HasPowerUp(PowerUpType::MAGNET)) {
             float magnetRadius = 2.0f + (shop.upgrades[2].level * 0.3f);
@@ -2013,7 +2298,7 @@ private:
         }
     }
 
-    
+
     void DrawFallingPlayer() {
         // Сохраняем текущую матрицу преобразования
         rlPushMatrix();
@@ -2145,7 +2430,13 @@ private:
             DrawText(TextFormat("Location: %s", menu.locations[menu.selectedLocation].name.c_str()), 10, 120, 15, DARKGRAY);
             DrawText(TextFormat("Character: %s", menu.characters[player.characterType].name.c_str()), 10, 140, 15, DARKGRAY);
 
-            int powerUpY = 160;
+            // НОВОЕ: отображение информации о компаньоне
+            DrawText(TextFormat("Companion: %s",
+                companion.isCatchingUp ? "CATCHING UP" :
+                (companion.followBehindTimer > 0 ? "RUNNING TOGETHER" : "FALLING BEHIND")),
+                10, 170, 15, DARKGRAY);
+
+            int powerUpY = 190;
             if (!player.activePowerUps.empty()) {
                 DrawText("ACTIVE POWER-UPS:", 10, powerUpY, 15, DARKPURPLE);
                 powerUpY += 20;
