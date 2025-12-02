@@ -180,12 +180,13 @@ struct Location {
 struct Character {
     std::string name;
     Texture2D texture;
+    Texture2D fallTexture;  // НОВОЕ: текстура падения для этого персонажа
     Color defaultColor;
-    bool useAnimatedTexture;          // Флаг использования анимированной текстуры
+    bool useAnimatedTexture;
 
     // Конструктор для удобной инициализации
     Character(const std::string& n, Color color)
-        : name(n), texture({ 0 }), defaultColor(color), useAnimatedTexture(false) {}
+        : name(n), texture({ 0 }), fallTexture({ 0 }), defaultColor(color), useAnimatedTexture(false) {}
 };
 
 // НОВАЯ СТРУКТУРА: персонаж-компаньон (ОБНОВЛЕННАЯ)
@@ -287,10 +288,10 @@ struct Shop {
 
         // Инициализация улучшений (теперь +2.5 секунды за уровень)
         upgrades = {
-            {"Speed Boost", "Increase speed boost duration", 1, 5, 100, 2.5f, 2.5f},
-            {"Invincibility", "Increase invincibility duration", 1, 5, 150, 2.5f, 2.5f},
-            {"Coin Magnet", "Increase magnet range and duration", 1, 5, 120, 2.5f, 2.5f},
-            {"Double Points", "Increase double points duration", 1, 5, 200, 2.5f, 2.5f},
+            {"Speed Boost", "Increase speed boost duration", 1, 5, 20, 2.5f, 2.5f},
+            {"Invincibility", "Increase invincibility duration", 1, 5, 50, 2.5f, 2.5f},
+            {"Coin Magnet", "Increase magnet range and duration", 1, 5, 20, 2.5f, 2.5f},
+            {"Double Points", "Increase double points duration", 1, 5, 20, 2.5f, 2.5f},
             {"Coin Value", "Increase coins value", 1, 5, 250, 100.0f, 25.0f}
         };
     }
@@ -342,9 +343,6 @@ private:
 
     // Анимированные текстуры для персонажей
     std::vector<AnimatedTexture> characterAnimations;
-
-    // НОВОЕ: текстура для падения (PNG картинка)
-    Texture2D fallTexture;
 
 public:
     Game() {
@@ -416,8 +414,8 @@ public:
         // Загружаем анимированные текстуры для персонажей
         LoadCharacterAnimations();
 
-        // НОВОЕ: загружаем PNG текстуру для падения
-        LoadFallTexture();
+        // НОВОЕ: загружаем текстуры падения для персонажей
+        LoadCharacterFallTextures();
 
         // НОВОЕ: загружаем текстуру для компаньона
         LoadCompanionTexture();
@@ -429,7 +427,7 @@ public:
         // Выгружаем текстуры локаций
         UnloadLocationTextures();
 
-        // Выгружаем текстуры персонажей
+        // Выгружаем текстуры персонажей (включая текстуры падения)
         UnloadCharacterTextures();
 
         // Выгружаем анимированные текстуры
@@ -441,8 +439,12 @@ public:
         UnloadTexture(magnetTexture);
         UnloadTexture(doublePointsTexture);
 
-        // НОВОЕ: выгружаем текстуру падения
-        UnloadTexture(fallTexture);
+        // НОВОЕ: выгружаем текстуры падения персонажей
+        for (auto& character : menu.characters) {
+            if (IsTextureReady(character.fallTexture)) {
+                UnloadTexture(character.fallTexture);
+            }
+        }
 
         // НОВОЕ: выгружаем текстуру компаньона
         UnloadTexture(companion.texture);
@@ -458,22 +460,92 @@ public:
     }
 
 private:
-    // НОВАЯ ФУНКЦИЯ: загрузка PNG текстуры для падения
-    void LoadFallTexture() {
-        // Пытаемся загрузить пользовательскую PNG текстуру
-        if (FileExists("fall_texture.png")) {
-            Image image = LoadImage("fall_texture.png");
+    // НОВАЯ ФУНКЦИЯ: загрузка текстур падения для всех персонажей
+    void LoadCharacterFallTextures() {
+        std::vector<std::string> fallTextureFiles = {
+            "default_fall.png",    // Для Default персонажа
+            "ninja_fall.png",      // Для Ninja персонажа  
+            "robot_fall.png",      // Для Robot персонажа
+            "girl_fall.png"        // Для Girl персонажа
+        };
+
+        for (int i = 0; i < (int)menu.characters.size(); i++) {
+            LoadCharacterFallTexture(fallTextureFiles[i], menu.characters[i].fallTexture, menu.characters[i].defaultColor);
+        }
+    }
+
+    // НОВАЯ ФУНКЦИЯ: загрузка конкретной текстуры падения
+    void LoadCharacterFallTexture(const std::string& filepath, Texture2D& fallTexture, Color characterColor) {
+        if (FileExists(filepath.c_str())) {
+            Image image = LoadImage(filepath.c_str());
             if (image.data != NULL) {
                 fallTexture = LoadTextureFromImage(image);
                 UnloadImage(image);
-                TraceLog(LOG_INFO, "Successfully loaded fall texture: fall_texture.png");
+                TraceLog(LOG_INFO, "Successfully loaded fall texture: %s", filepath.c_str());
                 return;
             }
         }
 
-        // Если файл не найден, создаем простую текстуру-заглушку
-        TraceLog(LOG_WARNING, "Fall texture not found: fall_texture.png, using default");
-        fallTexture = CreateDefaultFallTexture();
+        // Если файл не найден, создаем текстуру-заглушку с цветом персонажа
+        TraceLog(LOG_WARNING, "Fall texture not found: %s, using default", filepath.c_str());
+        fallTexture = CreateDefaultFallTexture(characterColor);
+    }
+
+    // НОВАЯ ФУНКЦИЯ: создание текстуры-заглушки с учетом цвета персонажа
+    Texture2D CreateDefaultFallTexture(Color characterColor) {
+        Image image = GenImageColor(64, 64, BLANK);
+
+        // Создаем простую текстуру лежащего персонажа с цветом соответствующего персонажа
+        for (int y = 0; y < 64; y++) {
+            for (int x = 0; x < 64; x++) {
+                Color color = BLANK;
+
+                // Тело лежащего персонажа (горизонтальное)
+                if (y >= 30 && y <= 34 && x >= 15 && x <= 49) {
+                    color = characterColor; // Используем цвет персонажа
+                }
+
+                // Голова
+                if (x >= 25 && x <= 39 && y >= 20 && y <= 29) {
+                    color = characterColor;
+                }
+
+                // Детали лица (глаза закрыты)
+                if (x >= 28 && x <= 32 && y >= 23 && y <= 25) {
+                    color = BLACK;
+                }
+
+                // Руки
+                if ((x >= 10 && x <= 15 && y >= 25 && y <= 35) ||
+                    (x >= 49 && x <= 54 && y >= 25 && y <= 35)) {
+                    color = characterColor;
+                }
+
+                // Ноги
+                if ((x >= 20 && x <= 25 && y >= 35 && y <= 45) ||
+                    (x >= 39 && x <= 44 && y >= 35 && y <= 45)) {
+                    color = characterColor;
+                }
+
+                ImageDrawPixel(&image, x, y, color);
+            }
+        }
+
+        Texture2D texture = LoadTextureFromImage(image);
+        UnloadImage(image);
+        return texture;
+    }
+
+    // НОВАЯ ФУНКЦИЯ: получение текстуры падения для текущего персонажа
+    Texture2D GetCurrentFallTexture() {
+        const Character& currentCharacter = menu.characters[player.characterType];
+
+        if (IsTextureReady(currentCharacter.fallTexture)) {
+            return currentCharacter.fallTexture;
+        }
+
+        // Fallback: создаем текстуру с цветом текущего персонажа
+        return CreateDefaultFallTexture(currentCharacter.defaultColor);
     }
 
     // НОВАЯ ФУНКЦИЯ: загрузка текстуры для компаньона (УПРОЩЕННАЯ ВЕРСИЯ)
@@ -508,51 +580,6 @@ private:
         TraceLog(LOG_WARNING, "Companion texture not found, using colored cube");
         companion.texture = { 0 }; // Пустая текстура
         companion.useAnimatedTexture = false;
-    }
-
-    // Функция создания текстуры-заглушки если PNG не найден
-    Texture2D CreateDefaultFallTexture() {
-        Image image = GenImageColor(64, 64, BLANK);
-
-        // Создаем простую текстуру лежащего персонажа как fallback
-        for (int y = 0; y < 64; y++) {
-            for (int x = 0; x < 64; x++) {
-                Color color = BLANK;
-
-                // Тело лежащего персонажа (горизонтальное)
-                if (y >= 30 && y <= 34 && x >= 15 && x <= 49) {
-                    color = RED; // Основной цвет тела
-                }
-
-                // Голова
-                if (x >= 25 && x <= 39 && y >= 20 && y <= 29) {
-                    color = RED;
-                }
-
-                // Детали лица (глаза закрыты)
-                if (x >= 28 && x <= 32 && y >= 23 && y <= 25) {
-                    color = BLACK;
-                }
-
-                // Руки
-                if ((x >= 10 && x <= 15 && y >= 25 && y <= 35) ||
-                    (x >= 49 && x <= 54 && y >= 25 && y <= 35)) {
-                    color = RED;
-                }
-
-                // Ноги
-                if ((x >= 20 && x <= 25 && y >= 35 && y <= 45) ||
-                    (x >= 39 && x <= 44 && y >= 35 && y <= 45)) {
-                    color = RED;
-                }
-
-                ImageDrawPixel(&image, x, y, color);
-            }
-        }
-
-        Texture2D texture = LoadTextureFromImage(image);
-        UnloadImage(image);
-        return texture;
     }
 
     void LoadCharacterAnimations() {
@@ -679,6 +706,7 @@ private:
     void UnloadCharacterTextures() {
         for (auto& character : menu.characters) {
             if (IsTextureReady(character.texture)) UnloadTexture(character.texture);
+            if (IsTextureReady(character.fallTexture)) UnloadTexture(character.fallTexture); // НОВОЕ
         }
     }
 
@@ -695,7 +723,6 @@ private:
             UnloadTexture(invincibilityTexture);
             UnloadTexture(magnetTexture);
             UnloadTexture(doublePointsTexture);
-            UnloadTexture(fallTexture); // НОВОЕ: выгружаем старую текстуру падения
             UnloadTexture(companion.texture); // НОВОЕ: выгружаем старую текстуру компаньона
         }
 
@@ -714,9 +741,6 @@ private:
         texturesLoaded = AreTexturesLoaded();
 
         TraceLog(LOG_INFO, "All textures loaded: %s", texturesLoaded ? "YES" : "NO");
-
-        // НОВОЕ: перезагружаем текстуру падения
-        LoadFallTexture();
 
         // НОВОЕ: перезагружаем текстуру компаньона
         LoadCompanionTexture();
@@ -900,7 +924,7 @@ private:
                 Color color = baseColor;
 
                 // Простой рисунок "лица"
-                if ((x > 20 && x < 44 && y > 20 && y < 44)) {
+                if ((x > 15 && x < 49 && y > 15 && y < 49)) {
                     color = ColorBrightness(baseColor, 0.7f);
                 }
 
@@ -1370,7 +1394,13 @@ private:
         UpdateCompanionStates();
 
         // Определение режима поведения
-        if (companion.followBehindTimer > 0) {
+        if (gameOver && player.isFalling) {
+            // При падении игрока компаньон продолжает бежать сзади, но не подбегает
+            companion.followDistance = 3.0f; // Обычная дистанция
+            companion.speed = player.originalSpeed; // Обычная скорость
+            companion.isCatchingUp = false;
+        }
+        else if (companion.followBehindTimer > 0) {
             // Первые 5 секунд - бежим ВМЕСТЕ с игроком
             companion.followBehindTimer -= GetFrameTime();
             companion.followDistance = 3.0f; // Нормальная дистанция
@@ -2251,7 +2281,10 @@ private:
 
         // ИСПРАВЛЕНО: рисуем компаньона ПОСЛЕ игрока (чтобы он был СЗАДИ)
         DrawPlayer();
-        DrawCompanion();
+        // КОМПАНЬОН НЕ РИСУЕТСЯ ПРИ ПАДЕНИИ ИГРОКА
+        if (!player.isFalling) {
+            DrawCompanion();
+        }
 
         if (HasPowerUp(PowerUpType::MAGNET)) {
             float magnetRadius = 2.0f + (shop.upgrades[2].level * 0.3f);
@@ -2298,7 +2331,6 @@ private:
         }
     }
 
-
     void DrawFallingPlayer() {
         // Сохраняем текущую матрицу преобразования
         rlPushMatrix();
@@ -2310,14 +2342,18 @@ private:
         rlRotatef(player.fallRotation, 0.0f, 0.0f, 1.0f);
 
         // ИСПРАВЛЕНИЕ: значительно увеличенные размеры для лежачего персонажа
-        Vector3 fallSize = { player.size.x * 2.0f, 0.8f, player.size.y * 1.5f }; // Еще больше увеличили
+        Vector3 fallSize = { player.size.x * 2.0f, 0.8f, player.size.y * 1.5f };
 
-        if (IsTextureReady(fallTexture)) {
-            DrawCubeTexture({ 0, 0, 0 }, fallSize, fallTexture, WHITE);
+        // ИСПРАВЛЕНИЕ: используем текстуру падения текущего персонажа
+        Texture2D currentFallTexture = GetCurrentFallTexture();
+
+        if (IsTextureReady(currentFallTexture)) {
+            DrawCubeTexture({ 0, 0, 0 }, fallSize, currentFallTexture, WHITE);
         }
         else {
             // Fallback если текстура не загружена
-            DrawCube({ 0, 0, 0 }, fallSize.x, fallSize.y, fallSize.z, RED);
+            Color fallColor = menu.characters[player.characterType].defaultColor;
+            DrawCube({ 0, 0, 0 }, fallSize.x, fallSize.y, fallSize.z, fallColor);
             DrawCubeWires({ 0, 0, 0 }, fallSize.x, fallSize.y, fallSize.z, BLACK);
         }
 
